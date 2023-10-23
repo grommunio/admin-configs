@@ -150,6 +150,10 @@ else
         echo -ne "\n## End ${operation_txt}\t:$(now)"
         exit $UPDATE_EXIT_STATUS
 fi
+
+echo -ne "\n${blue}▶${txtrst} Updating postfix configuration with new maps if exist"
+/usr/sbin/grommunio-postfix
+
 echo -ne "\n${blue}▶${txtrst} Checking for pending service restart or reboot"
 if [ "$PKG_MANAGER" == "zypper" ] || [ "$PKG_MANAGER" == "apt" ]; then
         if [ -f /var/run/reboot-needed ]; then
