@@ -1,0 +1,197 @@
+#!/bin/bash
+
+show_help() {
+        echo "Usage: ${0##*/} [check|update|upgrade] [noreboot]"
+        echo ""
+        echo "Run without arguments to update the system within the current distribution version."
+        echo "Use ${0##*/} check to see which updates are available for installation."
+        echo "Use ${0##*/} update to update packages without moving to the latest distribution version."
+        echo "Use ${0##*/} upgrade to upgrade the system to the latest distribution version."
+        echo ""
+        echo "Use noreboot as second parameter to not reboot automatically if recommended."
+}
+
+if [[ $1 == "-h" || $1 == "--help" ]]; then
+        show_help
+        exit 0
+fi
+
+add_grommunio_repo() {
+        case $1 in
+                zypper)
+                        zypper ar -f "${REPO_URL}" grommunio
+                        rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio
+                        ;;
+                yum)
+                        echo -e "[grommunio]\nname=grommunio\nbaseurl=${REPO_URL}\nenabled=1\ngpgcheck=0" > /etc/yum.repos.d/grommunio.repo
+                        rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio
+                        ;;
+                apt)
+                        echo -e "Types: deb\nURIs: ${REPO_URL}\nSuites: Debian_${VERSION_ID}\nComponents: main\nSigned-By: /usr/share/keyrings/download.grommunio.com.gpg" > /etc/apt/sources.list.d/grommunio.sources
+                        apt-get update -q=2
+                        curl https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --output /usr/share/keyrings/download.grommunio.com.gpg
+                        curl https://download.grommunio.com/RPM-GPG-KEY-grommunio >/etc/apt/trusted.gpg.d/download.grommunio.com.asc
+                        ;;
+        esac
+}
+
+blue="\x1b[36m"
+green="\x1b[32m"
+red="\x1b[31m"
+yellow="\x1b[33m"
+txtrst="\x1b[0m"
+logfile="/var/log/grommunio-update.log"
+
+UPGRADE_ARG=$1
+if [[ $UPGRADE_ARG == "update" || $UPGRADE_ARG == "upgrade" || $UPGRADE_ARG == "check" ]]; then
+        operation="${UPGRADE_ARG}"
+        operation_txt="${UPGRADE_ARG^}"
+else
+        operation="check"
+        operation_txt="Check"
+fi
+
+echo -e "${blue}                                       _                       __     __
+  ___ ________  __ _  __ _  __ _____  (_)__  ______ _____  ___/ /__ _/ /____
+ / _ \/ __/ _ \/  ' \/  ' \/ // / _ \/ / _ \/___/ // / _ \/ _  / _ \/ __/ -_)
+ \_, /_/  \___/_/_/_/_/_/_/\_,_/_//_/_/\___/    \_,_/ .__/\_,_/\_,_/\__/\__/
+/___/                                              /_/${txtrst}"
+
+exec > >(tee -i ${logfile})
+exec 2>&1
+
+now=$(date "+%a %Y-%m-%d %H:%M:%S %Z")
+echo -e "
+## This system\t: $(hostname -f)
+## Uptime\t: $(uptime | grep -ohe 'up .*' | sed 's/up *//g' | awk -F "," '{print $1}')
+## Load\t\t: $(uptime | grep -ohe 'load average[s:][: ].*' | awk '{ print "Last Minute: " $3" Last 5 Minutes: "$4" Last 15 Minutes: "$5 }')
+## IP Address\t: $(ip addr | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p' | xargs)
+## Start\t: ${now}"
+echo -ne "## Operation\t: ${operation_txt}\n"
+
+if [ -f /etc/os-release ]; then
+        . /etc/os-release
+else
+        echo "The file /etc/os-release was not found. The distribution cannot be identified."
+        exit 1
+fi
+
+case $ID in
+        debian|ubuntu)
+                PKG_MANAGER="apt"
+                if [[ $operation == "upgrade" ]]; then
+                        UPDATE_CMD="apt-get update -y && apt-get dist-upgrade -y"
+                elif [[ $operation == "update" ]]; then
+                        UPDATE_CMD="apt-get update -y && apt-get upgrade -y"
+                else
+                        UPDATE_CMD="apt-get update -y && apt-get upgrade -u -s"
+                fi
+                REPO_URL="https://download.grommunio.com/community/${ID^}_${VERSION_ID}/"
+                ;;
+        centos|rhel|rocky|almalinux)
+                PKG_MANAGER="yum"
+                if [[ $operation == "upgrade" || $operation == "update" ]]; then
+                        UPDATE_CMD="yum clean expire-cache -y && yum update -y"
+                        command -v dnf >/dev/null 2>&1 && { PKG_MANAGER="yum"; UPDATE_CMD="dnf upgrade --refresh -y"; }
+                else
+                        UPDATE_CMD="yum clean expire-cache -y && yum check-update -y"
+                        command -v dnf >/dev/null 2>&1 && { PKG_MANAGER="yum"; UPDATE_CMD="dnf check-update -y"; }
+                fi
+                REPO_URL="https://download.grommunio.com/community/EL${VERSION_ID%%.*}/"
+                ;;
+        opensuse*|sles)
+                PKG_MANAGER="zypper"
+                if [[ $operation == "upgrade" ]]; then
+                        zypper rr grommunio
+                        UPDATE_CMD="zypper ref && zypper dup -y"
+                elif [[ $operation == "update" ]]; then
+                        UPDATE_CMD="zypper ref && zypper up -y"
+                else
+                        UPDATE_CMD="zypper ref && zypper lu"
+                fi
+                REPO_URL="https://download.grommunio.com/community/openSUSE_Leap_${VERSION_ID}/"
+                ;;
+        grommunio*)
+                PKG_MANAGER="zypper"
+                if [[ $operation == "upgrade" ]]; then
+                        zypper rr grommunio
+                        UPDATE_CMD="zypper ref && zypper dup -y"
+                elif [[ $operation == "update" ]]; then
+                        UPDATE_CMD="zypper ref && zypper up -y"
+                else
+                        UPDATE_CMD="zypper ref && zypper lu"
+                fi
+                REPO_URL="https://download.grommunio.com/community/openSUSE_Leap_15.5/"
+                ;;
+        *)
+                echo "Distribution '$ID' is not supported. Please check available distributions at https://download.grommunio.com"
+                exit 1
+                ;;
+esac
+
+if ! grep -R --include '*.repo' "^baseurl=$REPO_URL" /etc/yum.repos.d/ 2>/dev/null && [ "$PKG_MANAGER" == "yum" ]; then
+        add_grommunio_repo $PKG_MANAGER
+elif ! zypper lr -d | grep "$REPO_URL" 1>/dev/null && [ "$PKG_MANAGER" == "zypper" ]; then
+        add_grommunio_repo $PKG_MANAGER
+elif ! grep -R --include '*.list' "$REPO_URL" /etc/apt/ 2>/dev/null && [ "$PKG_MANAGER" == "apt" ]; then
+        add_grommunio_repo $PKG_MANAGER
+fi
+
+echo -e "\n${blue}▶${txtrst} Starting ${operation_txt} (${UPDATE_CMD})"
+eval "$UPDATE_CMD"
+
+UPDATE_EXIT_STATUS=$?
+
+now=$(date "+%a %Y-%m-%d %H:%M:%S %Z")
+if [ $UPDATE_EXIT_STATUS -eq 0 ]; then
+        echo -ne "\n${green}▶${txtrst} ${operation_txt} completed successfully."
+else
+        echo -ne "\n${red}▶${txtrst} ${operation_txt} failed with exit status $UPDATE_EXIT_STATUS, please check the log ${logfile}\n"
+        echo -ne "\n## End ${operation_txt}\t:$(now)"
+        exit $UPDATE_EXIT_STATUS
+fi
+echo -ne "\n${blue}▶${txtrst} Checking for pending service restart or reboot"
+if [ "$PKG_MANAGER" == "zypper" ] || [ "$PKG_MANAGER" == "apt" ]; then
+        if [ -f /var/run/reboot-needed ]; then
+                if [[ $2 == "noreboot" ]]; then
+                        echo -e "\n${yellow}▶ Reboot required.${txtrst} Kernel upgrade waiting for activation. Please restart the system for the changes to take effect."
+                else
+                        /sbin/shutdown -r now
+                fi
+                echo -e "\n## End ${operation_txt}\t: ${now}"
+                exit 3
+        else
+                if [ "$PKG_MANAGER" == "zypper" ]; then
+                        zypper ps -sss | while read -r service; do
+                                echo -ne "\n## Restarting service ${service} after update: "
+                                systemctl restart "$service"
+                                echo -ne "... done"
+                        done
+                        if [[ $(zypper ps -sss | wc -l) -gt 0 ]]; then
+                                if [[ $2 == "noreboot" ]]; then
+                                        echo -e "\n${yellow}▶ Reboot required.${txtrst} Not all services could be restarted. Please restart the system for the changes to take effect."
+                                else
+                                        /sbin/shutdown -r now
+                                fi
+                        fi
+                fi
+                echo -e "\n## End ${operation_txt}\t: ${now}"
+                exit $UPDATE_EXIT_STATUS
+        fi
+elif [ "$PKG_MANAGER" == "yum" ] || [ "$PKG_MANAGER" == "dnf" ]; then
+        CURRENT_KERNEL=$(uname -r)
+        LATEST_KERNEL=$(rpm -q --last kernel | head -n 1 | awk '{print $1}' | sed 's/kernel-//')
+
+        if [ "$CURRENT_KERNEL" != "$LATEST_KERNEL" ]; then
+                if [[ $2 == "noreboot" ]]; then
+                        echo -e "\n${yellow}▶ Reboot required.${txtrst} Kernel upgrade waiting for activation. Please restart the system for the changes to take effect."
+                else
+                        /sbin/shutdown -r now
+                fi
+                echo -e "\n## End ${operation_txt}\t: ${now}"
+                exit 3
+        else
+                echo -e "\n## End ${operation_txt}\t: ${now}"
+                exit $UPDATE_EXIT_STATUS
+        fi
+fi
