@@ -72,7 +72,7 @@ echo -e "
 ## Uptime\t: $(uptime | grep -ohe 'up .*' | sed 's/up *//g' | awk -F "," '{ print $1 }')
 ## Load\t\t: $(uptime | grep -ohe 'load average[s:][: ].*' | awk '{ print "Last Minute: " $3" Last 5 Minutes: "$4" Last 15 Minutes: "$5 }')
 ## IP Address\t: $(ip addr | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p' | xargs)
-## Executed\t: ${FULL_COMMAND_LINE[@]}
+## Executed\t: ${FULL_COMMAND_LINE[*]}
 ## Start\t: ${NOW}"
 echo -ne "## Operation\t: ${OPERATION_TXT}\n"
 
@@ -132,7 +132,7 @@ esac
 
 echo -e "\n${BLUE}▶${TXTRST} Starting ${OPERATION_TXT} (${UPDATE_CMD})"
 if [ -n "${REPO}" ]; then
-	/usr/sbin/grommunio-repo ${REPO} 
+	/usr/sbin/grommunio-repo "${REPO}"
 fi
 eval "${UPDATE_CMD}"
 
@@ -166,7 +166,7 @@ if [ "${PKG_MANAGER}" == "zypper" ] || [ "${PKG_MANAGER}" == "apt" ]; then
 		if [ "${PKG_MANAGER}" == "zypper" ]; then
 			zypper ps -sss | while read -r SERVICE; do
 			echo -ne "\n## Restarting service ${SERVICE} after update: "
-			systemctl restart "$service"
+			systemctl restart "${SERVICE}"
 			echo -ne "... done"
 		done
 		if [[ $(zypper ps -sss | wc -l) -gt 0 ]]; then
