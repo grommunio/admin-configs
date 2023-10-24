@@ -1,12 +1,16 @@
 #!/bin/bash
 # update/extend grommunio postfix settings as part of grommunio-update
 
+if [ ! -e /etc/postfix/grommunio-virtual-mailbox-domains.cf ]; then
+exit 1
+fi
+
 MYSQL_USER=$(grep "^user" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^user = ' '{ print $2 }')
 MYSQL_PASS=$(grep "^password" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^password = ' '{ print $2 }')
 MYSQL_HOST=$(grep "^hosts" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^hosts = ' '{ print $2 }')
 MYSQL_DB=$(grep "^dbname" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^dbname = ' '{ print $2 }')
 
-if [ ! -e /etc/postfix/grommunio-virtual-mailbox-domains.cf ]; then
+# update base config grommunio-virtual-mailbox-domains.cf (query might have changed)
 
 cat > /etc/postfix/grommunio-virtual-mailbox-domains.cf <<EOF
 user = ${MYSQL_USER}
@@ -16,7 +20,9 @@ dbname = ${MYSQL_DB}
 query = SELECT 1 FROM domains WHERE domain_status=0 AND domainname='%s'
 EOF
 
-fi
+postconf -e virtual_mailbox_domains="mysql:/etc/postfix/grommunio-virtual-mailbox-domains.cf"
+
+# update/extend other postfix configs which have been extended over the time (grommunio-setup)
 
 if [ ! -e /etc/postfix/grommunio-virtual-mailbox-alias-maps.cf ]; then
 
@@ -27,6 +33,8 @@ hosts = ${MYSQL_HOST}
 dbname = ${MYSQL_DB}
 query = SELECT mainname FROM aliases WHERE aliasname='%s' UNION select destination FROM forwards WHERE username='%s' AND forward_type = 1
 EOF
+
+postconf -e virtual_alias_maps="mysql:/etc/postfix/grommunio-virtual-mailbox-alias-maps.cf"
 
 fi
 
@@ -40,6 +48,8 @@ dbname = ${MYSQL_DB}
 query = SELECT 1 FROM users WHERE username='%s'
 EOF
 
+postconf -e virtual_mailbox_maps="mysql:/etc/postfix/grommunio-virtual-mailbox-maps.cf"
+
 fi
 
 if [ ! -e /etc/postfix/grommunio-bcc-forwards.cf ]; then
@@ -52,10 +62,6 @@ dbname = ${MYSQL_DB}
 query = SELECT destination FROM forwards WHERE username='%s' AND forward_type = 0
 EOF
 
-fi
+postconf -e recipient_bcc_maps="mysql:/etc/postfix/grommunio-bcc-forwards.cf"
 
-postconf -e \
-  virtual_mailbox_domains="mysql:/etc/postfix/grommunio-virtual-mailbox-domains.cf" \
-  virtual_mailbox_maps="mysql:/etc/postfix/grommunio-virtual-mailbox-maps.cf" \
-  virtual_alias_maps="mysql:/etc/postfix/grommunio-virtual-mailbox-alias-maps.cf" \
-  recipient_bcc_maps="mysql:/etc/postfix/grommunio-bcc-forwards.cf"
+fi
