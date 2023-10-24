@@ -1,0 +1,107 @@
+#!/bin/bash
+
+show_help() {
+	echo "Usage: ${0##*/} [community|supported] (--credentials [username]:[password])"
+        echo "Sets the used repository for grommunio products"
+	echo ""
+        echo "Use \`${0##*/} community\`  to set community repositories."
+	echo "Use \`${0##*/} supported\`  to set supported repositories (subscription required)."
+}
+
+REPO_TYPE="${1}"
+if [[ "${REPO_TYPE}" != "community" && "${REPO_TYPE}" != "supported" ]]; then
+    echo "Invalid repository type: ${REPO_TYPE}"
+    show_help
+    exit 1
+fi
+
+CREDENTIALS=""
+ARGS=("$@")
+for ((i = 0; i < $#; i++)); do
+    if [[ "${ARGS[i]}" == "--credentials" && "$((i+1))" -lt $# && "${ARGS[i+1]}" =~ ^[^:]+:[^:]+$ ]]; then
+        CREDENTIALS="${ARGS[i+1]}"
+        break
+    fi
+done
+
+if [[ -n "${CREDENTIALS}" ]]; then
+	echo "${CREDENTIALS}" > /etc/grommunio-admin-common/license/credentials.txt
+	chown grommunio:grommunio /etc/grommunio-admin-common/license/credentials.txt
+fi
+
+if [ -f /etc/os-release ]; then
+	. /etc/os-release
+else
+	echo "The file /etc/os-release was not found. The distribution cannot be identified."
+	exit 1
+fi
+
+add_grommunio_repo() {
+	case ${1} in
+		zypper)
+			zypper rr grommunio > /dev/null 2>&1
+			zypper ar -f -k "${REPO_URL}" grommunio > /dev/null 2>&1
+			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
+			;;
+		yum)
+			echo -e "[grommunio]\nname=grommunio\nbaseurl=${REPO_URL}\nenabled=1\ngpgcheck=0\nusername=$(awk -F: '{ print $1 }' /etc/grommunio-admin-common/license/credentials.txt)\npassword=$(awk -F: '{ print $2 }' /etc/grommunio-admin-common/license/credentials.txt)" > /etc/yum.repos.d/grommunio.repo
+			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
+			;;
+		apt)
+			echo -e "Types: deb\nURIs: ${REPO_URL}\nSuites: ${ID^}_${VERSION_ID}\nComponents: main\nSigned-By: /usr/share/keyrings/download.grommunio.com.gpg" > /etc/apt/sources.list.d/grommunio.sources
+			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --output /usr/share/keyrings/download.grommunio.com.gpg > /dev/null 2>&1
+			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio >/etc/apt/trusted.gpg.d/download.grommunio.com.asc
+			if [[ ${VALID_REPO_TYPE} == "supported" ]]; then
+				echo -e "machine download.grommunio.com\nlogin $(awk -F: '{ print $1 }' /etc/grommunio-admin-common/license/credentials.txt)\npassword $(awk -F: '{ print $2 }' /etc/grommunio-admin-common/license/credentials.txt)" > /etc/apt/auth.conf.d/grommunio.conf
+			fi
+			;;
+	esac
+}
+
+SUPPORTED_URL="https://download.grommunio.com/supported/"
+if [[ -e /etc/grommunio-admin-common/license/credentials.txt ]] && [[ "${REPO_TYPE}" == "supported" ]]; then
+	CREDS=$(cat /etc/grommunio-admin-common/license/credentials.txt)
+	if ! curl -s --fail --basic --user "${CREDS}" "${SUPPORTED_URL}" > /dev/null 2>&1; then
+		VALID_REPO_TYPE="community"
+		REPO_PREFIX="https://download.grommunio.com"
+		echo "Supported credentials not valid. Please validate your subscription credentials."
+		echo "Using community repositories."
+	else
+		VALID_REPO_TYPE="supported"
+		REPO_PREFIX="https://${CREDS}@download.grommunio.com"
+	fi
+else
+	VALID_REPO_TYPE="community"
+	REPO_PREFIX="https://download.grommunio.com"
+fi
+
+case $ID in
+	debian|ubuntu)
+		PKG_MANAGER="apt"
+		REPO_URL="https://download.grommunio.com/${VALID_REPO_TYPE}/${ID^}_${VERSION_ID}/"
+		;;
+	centos|rhel|rocky|almalinux)
+		PKG_MANAGER="yum"
+		REPO_URL="https://download.grommunio.com/${VALID_REPO_TYPE}/EL${VERSION_ID%%.*}/"
+		;;
+	opensuse*|sles)
+		PKG_MANAGER="zypper"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_${VERSION_ID}/?ssl_verify=no"
+		;;
+	grommunio*)
+		PKG_MANAGER="zypper"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
+		;;
+	*)
+		echo "Distribution '${ID}' is not supported. Please check available distributions at https://download.grommunio.com"
+		exit 1
+		;;
+esac
+
+if ! grep -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>/dev/null && [ "${PKG_MANAGER}" == "yum" ]; then
+	add_grommunio_repo ${PKG_MANAGER}
+elif ! zypper lr -d | grep "$REPO_URL" 1>/dev/null && [ "$PKG_MANAGER" == "zypper" ]; then
+	add_grommunio_repo ${PKG_MANAGER}
+elif ! grep -R --include '*.list' "${REPO_URL}" /etc/apt/ 2>/dev/null && [ "${PKG_MANAGER}" == "apt" ]; then
+	add_grommunio_repo ${PKG_MANAGER}
+fi
