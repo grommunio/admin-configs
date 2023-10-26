@@ -152,6 +152,20 @@ if [[ ${NOPOSTFIX} -eq 0 ]]; then
 	/usr/sbin/grommunio-postfix
 fi
 
+if [[ ${OPERATION} == "update" ]] || [[ ${OPERATION} == "upgrade" ]]; then
+	if [ "${PKG_MANAGER}" == "zypper" ]; then
+		echo -ne "\n${BLUE}▶${TXTRST} Running post-update/upgrade checks"
+		if [[ "$(systemctl is-active redis@grommunio)" != "active" ]]; then
+			systemctl enable redis@grommunio
+			systemctl restart redis@grommunio
+		fi
+		if [[ ! -e /etc/php8/fpm/php-fpm.conf ]]; then
+			mv /etc/php8/fpm/php-fpm.conf.default /etc/php8/fpm/php-fpm.conf
+			systemctl restart php-fpm
+		fi
+	fi
+fi
+
 echo -ne "\n${BLUE}▶${TXTRST} Checking for pending service restart or reboot"
 if [ "${PKG_MANAGER}" == "zypper" ] || [ "${PKG_MANAGER}" == "apt" ]; then
 	if [ -f /var/run/reboot-needed ]; then
