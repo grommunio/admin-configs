@@ -163,6 +163,9 @@ if [[ ${OPERATION} == "update" ]] || [[ ${OPERATION} == "upgrade" ]]; then
 			mv /etc/php8/fpm/php-fpm.conf.default /etc/php8/fpm/php-fpm.conf
 			systemctl restart php-fpm
 		fi
+		if [[ "$(/usr/sbin/gromox-dbop -U | wc -l)" != "1" ]]; then
+			systemctl try-restart gromox-http gromox-zcore grommunio-admin-api
+		fi
 	fi
 fi
 
