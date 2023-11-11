@@ -41,6 +41,7 @@ add_grommunio_repo() {
 		zypper)
 			zypper rr grommunio > /dev/null 2>&1
 			zypper ar -f -k "${REPO_URL}" grommunio > /dev/null 2>&1
+			sed -i 's#15.[34]#15.5#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		yum)
@@ -86,7 +87,7 @@ case $ID in
 		;;
 	opensuse*|sles)
 		PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_${VERSION_ID}/?ssl_verify=no"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
 		;;
 	grommunio*)
 		PKG_MANAGER="zypper"
