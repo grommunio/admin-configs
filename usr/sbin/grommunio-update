@@ -155,6 +155,7 @@ fi
 if [[ ${OPERATION} == "update" ]] || [[ ${OPERATION} == "upgrade" ]]; then
 	if [ "${PKG_MANAGER}" == "zypper" ]; then
 		echo -ne "\n${BLUE}▶${TXTRST} Running post-update/upgrade checks"
+		systemctl daemon-reload
 		if [[ "$(systemctl is-active redis@grommunio)" != "active" ]]; then
 			systemctl enable redis@grommunio
 			systemctl restart redis@grommunio
