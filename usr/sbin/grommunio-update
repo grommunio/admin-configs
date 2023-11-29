@@ -162,6 +162,7 @@ if [[ ${OPERATION} == "update" ]] || [[ ${OPERATION} == "upgrade" ]]; then
 		fi
 		if [[ ! -e /etc/php8/fpm/php-fpm.conf ]]; then
 			mv /etc/php8/fpm/php-fpm.conf.default /etc/php8/fpm/php-fpm.conf
+			systemctl enable php-fpm
 			systemctl restart php-fpm
 		fi
 		if [[ "$(/usr/sbin/gromox-dbop -U | wc -l)" != "1" ]]; then
