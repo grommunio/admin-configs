@@ -169,6 +169,9 @@ if [[ ${OPERATION} == "update" ]] || [[ ${OPERATION} == "upgrade" ]]; then
 	if [[ "$(/usr/sbin/gromox-dbop -U | wc -l)" != "1" ]]; then
 		systemctl try-restart gromox-http gromox-zcore grommunio-admin-api
 	fi
+	if [[ "$(systemctl is-active postfix)" != "active" ]]; then
+		postconf -e smtpd_discard_ehlo_keywords=chunking
+	fi
 fi
 
 echo -ne "\n${BLUE}▶${TXTRST} Checking for pending service restart or reboot"
