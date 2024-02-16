@@ -131,8 +131,7 @@ case ${ID} in
 esac
 
 echo -e "\n${BLUE}▶${TXTRST} Starting ${OPERATION_TXT} (${UPDATE_CMD})"
-if [ -n "${REPO}" ] && [[ ${OPERATION} == "upgrade" ]]; then
-	REPO="community"
+if [ -n "${REPO}" ]; then
 	/usr/sbin/grommunio-repo "${REPO}"
 fi
 eval "${UPDATE_CMD}"
