@@ -195,6 +195,8 @@ if [ "${PKG_MANAGER}" == "zypper" ] || [ "${PKG_MANAGER}" == "apt" ]; then
 			if [[ ${NOREBOOT} -eq 1 ]] || [[ ${OPERATION} == "check" ]]; then
 				echo -e "\n${YELLOW}▶ Reboot required.${TXTRST} Not all services could be restarted. Please restart the system for the changes to take effect."
 			else
+				echo -e "\n${RED}▶ Reboot initiated.${TXTRST} System is rebooted in 5 seconds."
+				sleep 5
 				/sbin/shutdown -r now
 			fi
 		fi
@@ -210,6 +212,8 @@ elif [ "${PKG_MANAGER}" == "yum" ] || [ "${PKG_MANAGER}" == "dnf" ]; then
 		if [[ ${NOREBOOT} -eq 1 ]]; then
 			echo -e "\n${YELLOW}▶ Reboot required.${TXTRST} Kernel upgrade waiting for activation. Please restart the system for the changes to take effect."
 		else
+			echo -e "\n${RED}▶ Reboot initiated.${TXTRST} System is rebooted in 5 seconds."
+			sleep 5
 			/sbin/shutdown -r now
 		fi
 		echo -e "\n\n## End ${OPERATION_TXT}\t: ${NOW}"
