@@ -55,7 +55,10 @@ add_grommunio_repo() {
 	case ${1} in
 		zypper)
 			zypper rr grommunio > /dev/null 2>&1
-			zypper ar -f -k "${REPO_URL}" grommunio > /dev/null 2>&1
+			# because zypper ar is making bullshit with passwords,
+			# create repo file directly
+			#zypper ar -f -k "${REPO_URL}" grommunio > /dev/null 2>&1
+			echo -e "[grommunio]\nenabled=1\nautorefresh=1\nbaseurl=${REPO_URL}\ntype=rpm-md\n" > /etc/zypp/repos.d/grommunio.repo
 			sed -i 's#15.[34]#15.5#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
