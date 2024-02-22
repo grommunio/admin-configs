@@ -83,15 +83,20 @@ if [[ -e /etc/grommunio-admin-common/license/credentials.txt ]] && [[ "${REPO_TY
 	if ! curl -s --fail --basic --user "${CREDS}" "${SUPPORTED_URL}" > /dev/null 2>&1; then
 		VALID_REPO_TYPE="community"
 		REPO_PREFIX="https://download.grommunio.com"
-		echo "Supported credentials not valid. Please validate your subscription credentials."
-		echo "Using community repositories."
+		echo -e "${RED}▶ Supported credentials not valid. Please validate your subscription credentials.${TXTRST}"
+		exit 5
 	else
 		VALID_REPO_TYPE="supported"
 		REPO_PREFIX="https://${CREDS}@download.grommunio.com"
 	fi
 else
-	VALID_REPO_TYPE="community"
-	REPO_PREFIX="https://download.grommunio.com"
+	if [[ "${REPO_TYPE}" == "supported" ]]; then
+		echo -e "${RED}▶ Supported credentials not found. Please ensure that you have a valid subscription configured.${TXTRST}"
+		exit 6
+	else
+		VALID_REPO_TYPE="community"
+		REPO_PREFIX="https://download.grommunio.com"
+	fi
 fi
 
 case $ID in
@@ -116,6 +121,7 @@ case $ID in
 		exit 1
 		;;
 esac
+echo  "Repository URL = $REPO_URL"
 
 if ! grep -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>/dev/null && [ "${PKG_MANAGER}" == "yum" ]; then
 	add_grommunio_repo ${PKG_MANAGER}
