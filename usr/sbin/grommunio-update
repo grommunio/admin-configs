@@ -130,7 +130,8 @@ case ${ID} in
 		;;
 esac
 
-echo -e "\n${BLUE}▶${TXTRST} Starting ${OPERATION_TXT} (${UPDATE_CMD})"
+echo -en "\n${BLUE}▶${TXTRST} Starting ${OPERATION_TXT} (${UPDATE_CMD})."
+echo -e "\n${BLUE}▶${TXTRST} on repository ${REPO}."
 if [ -n "${REPO}" ]; then
 	/usr/sbin/grommunio-repo "${REPO}"
 fi
@@ -144,6 +145,7 @@ if [ ${UPDATE_EXIT_STATUS} -eq 0 ]; then
 else
 	echo -ne "\n${RED}▶${TXTRST} ${OPERATION_TXT} failed with exit status ${UPDATE_EXIT_STATUS}, please check the log ${LOGFILE}\n"
 	echo -ne "\n\n## End ${OPERATION_TXT}\t:${NOW}"
+	echo
 	exit ${UPDATE_EXIT_STATUS}
 fi
 
@@ -183,6 +185,7 @@ if [ "${PKG_MANAGER}" == "zypper" ] || [ "${PKG_MANAGER}" == "apt" ]; then
 			/sbin/shutdown -r now
 		fi
 		echo -e "\n\n## End ${OPERATION_TXT}\t: ${NOW}"
+		echo
 		exit 3
 	else
 		if [ "${PKG_MANAGER}" == "zypper" ]; then
@@ -202,6 +205,7 @@ if [ "${PKG_MANAGER}" == "zypper" ] || [ "${PKG_MANAGER}" == "apt" ]; then
 		fi
 		fi
 		echo -e "\n\n## End ${OPERATION_TXT}\t: ${NOW}"
+		echo
 		exit ${UPDATE_EXIT_STATUS}
 	fi
 elif [ "${PKG_MANAGER}" == "yum" ] || [ "${PKG_MANAGER}" == "dnf" ]; then
@@ -217,9 +221,11 @@ elif [ "${PKG_MANAGER}" == "yum" ] || [ "${PKG_MANAGER}" == "dnf" ]; then
 			/sbin/shutdown -r now
 		fi
 		echo -e "\n\n## End ${OPERATION_TXT}\t: ${NOW}"
+		echo
 		exit 3
 	else
 		echo -e "\n\n## End ${OPERATION_TXT}\t: ${NOW}"
+		echo
 		exit ${UPDATE_EXIT_STATUS}
 	fi
 fi
