@@ -184,7 +184,7 @@ fi
 
 echo -ne "\n${BLUE}▶${TXTRST} Checking for pending service restart or reboot"
 if [ "${PKG_MANAGER}" == "zypper" ] || [ "${PKG_MANAGER}" == "apt" ]; then
-	if [ -f /var/run/reboot-needed ]; then
+	if [ -f /var/run/reboot-needed ] || [ -f /var/run/reboot-required ]; then
 		if [[ ${NOREBOOT} -eq 1 ]] || [[ ${OPERATION} == "check" ]]; then
 			echo -e "\n${YELLOW}▶ Reboot required.${TXTRST} Kernel upgrade waiting for activation. Please restart the system for the changes to take effect."
 		else
