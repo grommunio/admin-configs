@@ -29,7 +29,12 @@ for ((i = 0; i < $#; i++)); do
     fi
 done
 
-# if credentials are not given by commandline, try to get them from repo
+# if credentials are not given by commandline, try to get them from credentials file
+if [[ -z "${CREDENTIALS}" ]]; then
+	CREDENTIALS=$(cat /etc/grommunio-admin-common/license/credentials.txt)
+fi
+
+# if credentials are still not detected, try to get them from repo file
 if [[ -z "${CREDENTIALS}" ]]; then
 	CREDENTIALS=$(grep "^baseurl=https://.*:.*@.*$" /etc/zypp/repos.d/grommunio.repo \
 		| sed 's#^baseurl=https://\([^:][^:]*\):\([^@][^@]*\)@.*#\1:\2#')
