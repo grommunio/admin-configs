@@ -31,12 +31,13 @@ done
 
 # if credentials are not given by commandline, try to get them from credentials file
 if [[ -z "${CREDENTIALS}" ]]; then
-	CREDENTIALS=$(cat /etc/grommunio-admin-common/license/credentials.txt)
+	[ -f '/etc/grommunio-admin-common/license/credentials.txt' ] && CREDENTIALS=$(cat /etc/grommunio-admin-common/license/credentials.txt)
 fi
 
 # if credentials are still not detected, try to get them from repo file
 if [[ -z "${CREDENTIALS}" ]]; then
-	CREDENTIALS=$(grep "^baseurl=https://.*:.*@.*$" /etc/zypp/repos.d/grommunio.repo \
+	[ -f '/etc/zypp/repos.d/grommunio.repo' ] && \
+		CREDENTIALS=$(grep "^baseurl=https://.*:.*@.*$" /etc/zypp/repos.d/grommunio.repo \
 		| sed 's#^baseurl=https://\([^:][^:]*\):\([^@][^@]*\)@.*#\1:\2#')
 fi
 
@@ -68,7 +69,11 @@ add_grommunio_repo() {
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		yum)
-			echo -e "[grommunio]\nname=grommunio\nbaseurl=${REPO_URL}\nenabled=1\ngpgcheck=0\nusername=$(awk -F: '{ print $1 }' /etc/grommunio-admin-common/license/credentials.txt)\npassword=$(awk -F: '{ print $2 }' /etc/grommunio-admin-common/license/credentials.txt)" > /etc/yum.repos.d/grommunio.repo
+			if [ -f "/etc/grommunio-admin-common/license/credentials.txt" ]; then
+				echo -e "[grommunio]\nname=grommunio\nbaseurl=${REPO_URL}\nenabled=1\ngpgcheck=0\nusername=$(awk -F: '{ print $1 }' /etc/grommunio-admin-common/license/credentials.txt)\npassword=$(awk -F: '{ print $2 }' /etc/grommunio-admin-common/license/credentials.txt)" > /etc/yum.repos.d/grommunio.repo
+			else
+				echo -e "[grommunio]\nname=grommunio\nbaseurl=${REPO_URL}\nenabled=1\ngpgcheck=0\n" > /etc/yum.repos.d/grommunio.repo
+			fi
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		apt)
@@ -128,12 +133,12 @@ case $ID in
 esac
 echo  "Repository URL = $REPO_URL"
 
-if ! grep -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>/dev/null && [ "${PKG_MANAGER}" == "yum" ]; then
+if grep -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>&1 >/dev/null && [ "${PKG_MANAGER}" == "yum" ]; then
 	add_grommunio_repo ${PKG_MANAGER}
-elif [ "`which zypper`" ] &&  ! zypper lr -d | grep "$REPO_URL" 1>/dev/null  && [ "$PKG_MANAGER" == "zypper" ]; then
+elif [ "`which zypper 2>/dev/null`" ] && ! zypper lr -d | grep "$REPO_URL" 1>/dev/null && [ "$PKG_MANAGER" == "zypper" ]; then
 	add_grommunio_repo ${PKG_MANAGER}
 elif ! grep -R --include '*.list' "${REPO_URL}" /etc/apt/ 2>/dev/null && [ "${PKG_MANAGER}" == "apt" ]; then
 	add_grommunio_repo ${PKG_MANAGER}
 else
-	echo "${RED}No correct package manager found.${TXTRST}"
+        echo "${RED}No correct package manager found.${TXTRST}"                    │
 fi
