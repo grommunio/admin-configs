@@ -1,8 +1,8 @@
 #!/bin/bash
-BLUE="\x1b[36m"
+#BLUE="\x1b[36m"
 GREEN="\x1b[32m"
 RED="\x1b[31m"
-YELLOW="\x1b[33m"
+#YELLOW="\x1b[33m"
 TXTRST="\x1b[0m"
 
 show_help() {
@@ -41,9 +41,9 @@ if [[ -z "${CREDENTIALS}" ]]; then
 		| sed 's#^baseurl=https://\([^:][^:]*\):\([^@][^@]*\)@.*#\1:\2#')
 fi
 
-echo -en "Credentials = ${GREEN}$(echo $CREDENTIALS|awk -F ':' '{ print $1 }')"
+echo -en "Credentials = ${GREEN}$(echo "$CREDENTIALS"|awk -F ':' '{ print $1 }')"
 echo -en "${TXTRST}:"
-echo -en "${RED}$(echo $CREDENTIALS|awk -F ':' '{ print $2 }'|sed 's#^\(....\).*$#\1...#')"
+echo -en "${RED}$(echo "$CREDENTIALS"|awk -F ':' '{ print $2 }'|sed 's#^\(....\).*$#\1...#')"
 echo -e "${TXTRST}."
 if [[ -n "${CREDENTIALS}" ]]; then
 	echo "${CREDENTIALS}" > /etc/grommunio-admin-common/license/credentials.txt
@@ -67,6 +67,8 @@ add_grommunio_repo() {
 			echo -e "[grommunio]\nenabled=1\nautorefresh=1\nbaseurl=${REPO_URL}\ntype=rpm-md\n" > /etc/zypp/repos.d/grommunio.repo
 			sed -i 's#15.[34]#15.5#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
+			# gpg-auto-import is also used in grommunio-cui. ¯\_(ツ)_/¯
+			zypper --non-interactive --gpg-auto-import-keys refresh --repo grommunio
 			;;
 		yum)
 			if [ -f "/etc/grommunio-admin-common/license/credentials.txt" ]; then
@@ -77,9 +79,15 @@ add_grommunio_repo() {
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		apt)
-			echo -e "Types: deb\nURIs: ${REPO_URL}\nSuites: ${ID^}_${VERSION_ID}\nComponents: main\nSigned-By: /usr/share/keyrings/download.grommunio.com.gpg" > /etc/apt/sources.list.d/grommunio.sources
-			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --output /usr/share/keyrings/download.grommunio.com.gpg > /dev/null 2>&1
-			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio >/etc/apt/trusted.gpg.d/download.grommunio.com.asc
+			mkdir -p /etc/apt/keyrings
+			if command -v gpg >/dev/null; then
+				KEYRING=/etc/apt/keyrings/download.grommunio.com.gpg
+				curl -s https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --output $KEYRING > /dev/null 2>&1
+			else
+				KEYRING=/etc/apt/keyrings/download.grommunio.com.asc
+				curl -s https://download.grommunio.com/RPM-GPG-KEY-grommunio > $KEYRING
+			fi
+			echo -e "Types: deb\nURIs: ${REPO_URL}\nSuites: ${ID^}_${VERSION_ID}\nComponents: main\nSigned-By: $KEYRING" > /etc/apt/sources.list.d/grommunio.sources
 			if [[ ${VALID_REPO_TYPE} == "supported" ]]; then
 				echo -e "machine download.grommunio.com\nlogin $(awk -F: '{ print $1 }' /etc/grommunio-admin-common/license/credentials.txt)\npassword $(awk -F: '{ print $2 }' /etc/grommunio-admin-common/license/credentials.txt)" > /etc/apt/auth.conf.d/grommunio.conf
 			fi
@@ -113,32 +121,33 @@ case $ID in
 	debian|ubuntu)
 		PKG_MANAGER="apt"
 		REPO_URL="https://download.grommunio.com/${VALID_REPO_TYPE}/${ID^}_${VERSION_ID}/"
+		if ! grep -q -R --include '*.list' --include '*.sources' "${REPO_URL}" /etc/apt/sources.list* 2>/dev/null; then
+			add_grommunio_repo ${PKG_MANAGER}
+		fi
 		;;
 	centos|rhel|rocky|almalinux)
 		PKG_MANAGER="yum"
 		REPO_URL="https://download.grommunio.com/${VALID_REPO_TYPE}/EL${VERSION_ID%%.*}/"
+		if ! grep -q -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>/dev/null; then
+			add_grommunio_repo ${PKG_MANAGER}
+		fi
 		;;
 	opensuse*|sles)
 		PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/"
+		if ! zypper lr -d | grep "$REPO_URL" 1>/dev/null; then
+			add_grommunio_repo ${PKG_MANAGER}
+		fi
 		;;
 	grommunio*)
 		PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/"
+		if ! zypper lr -d | grep -q "$REPO_URL" 1>/dev/null; then
+			add_grommunio_repo ${PKG_MANAGER}
+		fi
 		;;
 	*)
 		echo "Distribution '${ID}' is not supported. Please check available distributions at https://download.grommunio.com"
 		exit 1
 		;;
 esac
-echo  "Repository URL = $REPO_URL"
-
-if grep -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>&1 >/dev/null && [ "${PKG_MANAGER}" == "yum" ]; then
-	add_grommunio_repo ${PKG_MANAGER}
-elif [ "`which zypper 2>/dev/null`" ] && ! zypper lr -d | grep "$REPO_URL" 1>/dev/null && [ "$PKG_MANAGER" == "zypper" ]; then
-	add_grommunio_repo ${PKG_MANAGER}
-elif ! grep -R --include '*.list' "${REPO_URL}" /etc/apt/ 2>/dev/null && [ "${PKG_MANAGER}" == "apt" ]; then
-	add_grommunio_repo ${PKG_MANAGER}
-else
-        echo "${RED}No correct package manager found.${TXTRST}"                    │
-fi
