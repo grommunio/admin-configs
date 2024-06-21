@@ -1,17 +1,23 @@
 #!/bin/bash
+BLUE="\x1b[36m"
+GREEN="\x1b[32m"
+RED="\x1b[31m"
+YELLOW="\x1b[33m"
+TXTRST="\x1b[0m"
+LOGFILE="/var/log/grommunio-update.log"
 
 show_help() {
-        echo "Usage: ${0##*/} [check|update|upgrade] [community|supported] (--noreboot|--nopostfix)"
-        echo "Updates the grommunio environment including OS"
+	echo "Usage: ${0##*/} [check|update|upgrade] [community|supported] (--noreboot|--nopostfix)"
+	echo "Updates the grommunio environment including OS"
 	echo ""
-        echo "Use \`${0##*/} check\`   to see which updates are available for installation."
-        echo "Use \`${0##*/} update\`  to update packages without moving to the latest distribution version."
-        echo "Use \`${0##*/} upgrade\` to upgrade the system to the latest distribution version."
-        echo ""
-        echo "Second parameter is      to use either community or supported repositories for specified action."
-        echo ""
-        echo "Use \`--noreboot\` to not reboot automatically if recommended."
-        echo "Use \`--nopostfix\` to not update postfix configuration."
+	echo "Use \`${0##*/} check\`   to see which updates are available for installation."
+	echo "Use \`${0##*/} update\`  to update packages without moving to the latest distribution version."
+	echo "Use \`${0##*/} upgrade\` to upgrade the system to the latest distribution version."
+	echo ""
+	echo "Second parameter is      to use either community or supported repositories for specified action."
+	echo ""
+	echo "Use \`--noreboot\` to not reboot automatically if recommended."
+	echo "Use \`--nopostfix\` to not update postfix configuration."
 }
 
 make_reboot() {
@@ -55,13 +61,6 @@ if [ -z "${OPERATION}" ]; then
 	exit 1
 fi
 
-BLUE="\x1b[36m"
-GREEN="\x1b[32m"
-RED="\x1b[31m"
-YELLOW="\x1b[33m"
-TXTRST="\x1b[0m"
-LOGFILE="/var/log/grommunio-update.log"
-
 echo -e "${BLUE}                                       _                       __     __
   ___ ________  __ _  __ _  __ _____  (_)__  ______ _____  ___/ /__ _/ /____
  / _ \/ __/ _ \/  ' \/  ' \/ // / _ \/ / _ \/___/ // / _ \/ _  / _ \/ __/ -_)
@@ -92,12 +91,13 @@ fi
 case ${ID} in
 	debian|ubuntu)
 		PKG_MANAGER="apt"
+		export DEBIAN_FRONTEND=noninteractive
 		if [[ ${OPERATION} == "upgrade" ]]; then
-			UPDATE_CMD="apt-get update -y && apt-get dist-upgrade -y"
+			UPDATE_CMD="apt-get update && apt-get dist-upgrade --assume-yes"
 		elif [[ ${OPERATION} == "update" ]]; then
-			UPDATE_CMD="apt-get update -y && apt-get upgrade -y"
+			UPDATE_CMD="apt-get update && apt-get upgrade --assume-yes"
 		else
-			UPDATE_CMD="apt-get update -y && apt-get upgrade -u -s"
+			UPDATE_CMD="apt-get update && apt-get upgrade --simulate"
 		fi
 		;;
 	centos|rhel|rocky|almalinux)
@@ -113,21 +113,21 @@ case ${ID} in
 	opensuse*|sles)
 		PKG_MANAGER="zypper"
 		if [[ ${OPERATION} == "upgrade" ]]; then
-			UPDATE_CMD="zypper ref && zypper dup -y"
+			UPDATE_CMD="zypper refresh && zypper --non-interactive dist-upgrade"
 		elif [[ ${OPERATION} == "update" ]]; then
-			UPDATE_CMD="zypper ref && zypper up -y"
+			UPDATE_CMD="zypper refresh && zypper --non-interactive update"
 		else
-			UPDATE_CMD="zypper ref && zypper lu"
+			UPDATE_CMD="zypper refresh && zypper list-updates"
 		fi
 		;;
 	grommunio*)
 		PKG_MANAGER="zypper"
 		if [[ ${OPERATION} == "upgrade" ]]; then
-			UPDATE_CMD="zypper ref && zypper dup -y"
+			UPDATE_CMD="zypper refresh && zypper --non-interactive dist-upgrade"
 		elif [[ ${OPERATION} == "update" ]]; then
-			UPDATE_CMD="zypper ref && zypper up -y"
+			UPDATE_CMD="zypper refresh && zypper --non-interactive update"
 		else
-			UPDATE_CMD="zypper ref && zypper lu --allow-vendor-change"
+			UPDATE_CMD="zypper refresh && zypper list-updates"
 		fi
 		;;
 	*)
