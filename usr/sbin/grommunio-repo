@@ -65,7 +65,7 @@ add_grommunio_repo() {
 			# create repo file directly
 			#zypper ar -f -k "${REPO_URL}" grommunio > /dev/null 2>&1
 			echo -e "[grommunio]\nenabled=1\nautorefresh=1\nbaseurl=${REPO_URL}\ntype=rpm-md\n" > /etc/zypp/repos.d/grommunio.repo
-			sed -i 's#15.[34]#15.5#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
+			sed -i 's#15.[34]#15.6#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		yum)
@@ -120,11 +120,11 @@ case $ID in
 		;;
 	opensuse*|sles)
 		PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.6/?ssl_verify=no"
 		;;
 	grommunio*)
 		PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.6/?ssl_verify=no"
 		;;
 	*)
 		echo "Distribution '${ID}' is not supported. Please check available distributions at https://download.grommunio.com"
