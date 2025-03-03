@@ -1,8 +1,7 @@
 #!/bin/bash
-BLUE="\x1b[36m"
+export LANG=C
 GREEN="\x1b[32m"
 RED="\x1b[31m"
-YELLOW="\x1b[33m"
 TXTRST="\x1b[0m"
 
 show_help() {
@@ -41,9 +40,11 @@ if [[ -z "${CREDENTIALS}" ]]; then
 		| sed 's#^baseurl=https://\([^:][^:]*\):\([^@][^@]*\)@.*#\1:\2#')
 fi
 
-echo -en "Credentials = ${GREEN}$(echo $CREDENTIALS|awk -F ':' '{ print $1 }')"
+if [[ -n "${CREDENTIALS}" ]]; then
+	echo -en "Credentials = ${GREEN}$(echo "${CREDENTIALS}" | awk -F ':' '{ print $1 }')"
+fi
 echo -en "${TXTRST}:"
-echo -en "${RED}$(echo $CREDENTIALS|awk -F ':' '{ print $2 }'|sed 's#^\(....\).*$#\1...#')"
+echo -en "${RED}$(echo "$CREDENTIALS"|awk -F ':' '{ print $2 }'|sed 's#^\(....\).*$#\1...#')"
 echo -e "${TXTRST}."
 if [[ -n "${CREDENTIALS}" ]]; then
 	echo "${CREDENTIALS}" > /etc/grommunio-admin-common/license/credentials.txt
@@ -58,14 +59,14 @@ else
 fi
 
 add_grommunio_repo() {
-	case ${1} in
+	case $PKG_MANAGER in
 		zypper)
 			zypper rr grommunio > /dev/null 2>&1
 			# because zypper ar is making bullshit with passwords,
 			# create repo file directly
 			#zypper ar -f -k "${REPO_URL}" grommunio > /dev/null 2>&1
 			echo -e "[grommunio]\nenabled=1\nautorefresh=1\nbaseurl=${REPO_URL}\ntype=rpm-md\n" > /etc/zypp/repos.d/grommunio.repo
-			sed -i 's#15.[34]#15.5#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
+			sed -i 's#15.[345]#'"$VERSION_ID"'#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		yum)
@@ -77,11 +78,42 @@ add_grommunio_repo() {
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		apt)
-			echo -e "Types: deb\nURIs: ${REPO_URL}\nSuites: ${ID^}_${VERSION_ID}\nComponents: main\nSigned-By: /usr/share/keyrings/download.grommunio.com.gpg" > /etc/apt/sources.list.d/grommunio.sources
-			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --output /usr/share/keyrings/download.grommunio.com.gpg > /dev/null 2>&1
-			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio >/etc/apt/trusted.gpg.d/download.grommunio.com.asc
+			mkdir -p /etc/apt/keyrings
+			tmp=$(mktemp)
+			trap 'rm -f $tmp' EXIT INT HUP
+			/usr/lib/apt/apt-helper download-file https://download.grommunio.com/RPM-GPG-KEY-grommunio "$tmp"
+			if command -v gpg >/dev/null; then
+				EXT=gpg; KEYRING=$KEYRING.$EXT
+				gpg --dearmor "$tmp"
+			else
+				EXT=asc; KEYRING=$KEYRING.$EXT
+				mv "$tmp"{,"$EXT"}
+			fi
+			if ! test -f "$KEYRING" || ! diff "$tmp"."$EXT" "$KEYRING" >/dev/null ; then
+					mv -vf "$tmp"."$EXT" "$KEYRING";
+			fi
+			printf "Types: deb\nEnabled: yes\nURIs: ${REPO_URL}\nSuites: ${ID^}_${VERSION_ID}\nComponents: main\nSigned-By: $KEYRING" \
+				> "$SOURCES"
 			if [[ ${VALID_REPO_TYPE} == "supported" ]]; then
-				echo -e "machine download.grommunio.com\nlogin $(awk -F: '{ print $1 }' /etc/grommunio-admin-common/license/credentials.txt)\npassword $(awk -F: '{ print $2 }' /etc/grommunio-admin-common/license/credentials.txt)" > /etc/apt/auth.conf.d/grommunio.conf
+				# Use oneline style as this is easier to verify
+				APTAUTH="machine download.grommunio.com login ${CREDENTIALS%:*} password ${CREDENTIALS#*:}"
+				# Only overwrite config if "oneline" isn't present
+				if ! grep -qxF -- "$APTAUTH" /etc/apt/auth.conf.d/*.conf; then
+					# This will rename any old multiline configs
+					todelete=$(grep -l 'machine download.grommunio.com' /etc/apt/auth.conf.d/*.conf)
+					[ -n "$todelete" ] &&  mv -fv "$todelete"{,.bak}
+					echo "$APTAUTH" > "$AUTHCONF"
+				fi
+			fi
+			chmod -v o-rwx /etc/apt/auth.conf.d/grommunio.conf
+			DUPLICATES=$(apt-get update -qq |& \grep -Po '(?<=[in|and] )\S+.(?=:)'|sort -u|grep -v "$SOURCES")
+			if [ -n "$DUPLCATES" ]; then
+				# shellcheck disable=SC2086
+				sed -i '/Enabled/d;/Suites/iEnabled: no' $DUPLICATES
+			fi
+			if ! apt-get update; then
+				echo -e "${RED} ⚠ [ERROR] See the log above.${TXTRST}"
+				exit 1
 			fi
 			;;
 	esac
@@ -111,20 +143,42 @@ fi
 
 case $ID in
 	debian|ubuntu)
-		PKG_MANAGER="apt"
+		export PKG_MANAGER="apt"
+		ARCH=$(dpkg --print-architecture)
+		AUTHCONF=/etc/apt/auth.conf.d/grommunio.conf
+		KEYRING=/etc/apt/keyrings/download.grommunio.com
+		SOURCES=/etc/apt/sources.list.d/grommunio.sources
 		REPO_URL="https://download.grommunio.com/${VALID_REPO_TYPE}/${ID^}_${VERSION_ID}/"
+		POLICY="release\ v=${VALID_REPO_TYPE},o=grommunio,n=Debian_${VERSION_ID},l=grommunio,c=main,b=${ARCH}"
+		# only add/replace repository if not present or problemss occur
+		# repository not known 
+		if ! apt-cache policy |grep -C1 -qE "$POLICY" ; then
+			add_grommunio_repo
+		# mend keyring, credential and duplicate sources.
+		elif ! apt-get update  -qq; then
+			add_grommunio_repo
+		fi
 		;;
 	centos|rhel|rocky|almalinux)
-		PKG_MANAGER="yum"
+		export PKG_MANAGER="yum"
 		REPO_URL="https://download.grommunio.com/${VALID_REPO_TYPE}/EL${VERSION_ID%%.*}/"
+		if ! grep -q -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>/dev/null; then
+			add_grommunio_repo
+		fi
 		;;
 	opensuse*|sles)
-		PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
+		export PKG_MANAGER="zypper"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_${VERSION_ID}/"
+		if ! zypper lr -d | grep "$REPO_URL" 1>/dev/null; then
+			add_grommunio_repo
+		fi
 		;;
 	grommunio*)
-		PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_15.5/?ssl_verify=no"
+		export PKG_MANAGER="zypper"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_${VERSION_ID}/?ssl_verify=no"
+		if ! zypper lr -d | grep -q "$REPO_URL" 1>/dev/null; then
+			add_grommunio_repo
+		fi
 		;;
 	*)
 		echo "Distribution '${ID}' is not supported. Please check available distributions at https://download.grommunio.com"
@@ -132,13 +186,3 @@ case $ID in
 		;;
 esac
 echo  "Repository URL = $REPO_URL"
-
-if grep -R --include '*.repo' "^baseurl=${REPO_URL}" /etc/yum.repos.d/ 2>&1 >/dev/null && [ "${PKG_MANAGER}" == "yum" ]; then
-	add_grommunio_repo ${PKG_MANAGER}
-elif [ "`which zypper 2>/dev/null`" ] && ! zypper lr -d | grep "$REPO_URL" 1>/dev/null && [ "$PKG_MANAGER" == "zypper" ]; then
-	add_grommunio_repo ${PKG_MANAGER}
-elif ! grep -R --include '*.list' "${REPO_URL}" /etc/apt/ 2>/dev/null && [ "${PKG_MANAGER}" == "apt" ]; then
-	add_grommunio_repo ${PKG_MANAGER}
-else
-        echo "${RED}No correct package manager found.${TXTRST}"                    │
-fi
