@@ -44,7 +44,7 @@ if [[ -n "${CREDENTIALS}" ]]; then
 	echo -en "Credentials = ${GREEN}$(echo "${CREDENTIALS}" | awk -F ':' '{ print $1 }')"
 fi
 echo -en "${TXTRST}:"
-echo -en "${RED}$(echo "$CREDENTIALS"|awk -F ':' '{ print $2 }'|sed 's#^\(....\).*$#\1...#')"
+echo -en "${RED}$(echo "${CREDENTIALS}" | awk -F ':' '{ print $2 }'|sed 's#^\(....\).*$#\1...#')"
 echo -e "${TXTRST}."
 if [[ -n "${CREDENTIALS}" ]]; then
 	echo "${CREDENTIALS}" > /etc/grommunio-admin-common/license/credentials.txt
@@ -66,7 +66,7 @@ add_grommunio_repo() {
 			# create repo file directly
 			#zypper ar -f -k "${REPO_URL}" grommunio > /dev/null 2>&1
 			echo -e "[grommunio]\nenabled=1\nautorefresh=1\nbaseurl=${REPO_URL}\ntype=rpm-md\n" > /etc/zypp/repos.d/grommunio.repo
-			sed -i 's#15.[345]#'"$VERSION_ID"'#g' /etc/zypp/repos.d/*.repo > /dev/null 2>&1
+			sed -i "s#15.[34]#${VERSION_ID}#g" /etc/zypp/repos.d/*.repo > /dev/null 2>&1
 			rpm --import https://download.grommunio.com/RPM-GPG-KEY-grommunio > /dev/null 2>&1
 			;;
 		yum)
@@ -167,18 +167,12 @@ case $ID in
 		fi
 		;;
 	opensuse*|sles)
-		export PKG_MANAGER="zypper"
-		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_${VERSION_ID}/"
-		if ! zypper lr -d | grep "$REPO_URL" 1>/dev/null; then
-			add_grommunio_repo
-		fi
+		PKG_MANAGER="zypper"
+		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_${VERSION_ID}/?ssl_verify=no"
 		;;
 	grommunio*)
-		export PKG_MANAGER="zypper"
+		PKG_MANAGER="zypper"
 		REPO_URL="${REPO_PREFIX}/${VALID_REPO_TYPE}/openSUSE_Leap_${VERSION_ID}/?ssl_verify=no"
-		if ! zypper lr -d | grep -q "$REPO_URL" 1>/dev/null; then
-			add_grommunio_repo
-		fi
 		;;
 	*)
 		echo "Distribution '${ID}' is not supported. Please check available distributions at https://download.grommunio.com"
