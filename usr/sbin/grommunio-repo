@@ -92,8 +92,8 @@ add_grommunio_repo() {
 			if ! test -f "$KEYRING" || ! diff "$tmp"."$EXT" "$KEYRING" >/dev/null ; then
 					mv -vf "$tmp"."$EXT" "$KEYRING";
 			fi
-			printf "Types: deb\nEnabled: yes\nURIs: ${REPO_URL}\nSuites: ${ID^}_${VERSION_ID}\nComponents: main\nSigned-By: $KEYRING" \
-				> "$SOURCES"
+			printf "Types: deb\nEnabled: yes\nURIs: %s\nSuites: %s\nComponents: main\nSigned-By: %s\n" \
+				"${REPO_URL}" "${ID^}_${VERSION_ID}" "$KEYRING" > "$SOURCES"
 			if [[ ${VALID_REPO_TYPE} == "supported" ]]; then
 				# Use oneline style as this is easier to verify
 				APTAUTH="machine download.grommunio.com login ${CREDENTIALS%:*} password ${CREDENTIALS#*:}"
@@ -149,10 +149,10 @@ case $ID in
 		KEYRING=/etc/apt/keyrings/download.grommunio.com
 		SOURCES=/etc/apt/sources.list.d/grommunio.sources
 		REPO_URL="https://download.grommunio.com/${VALID_REPO_TYPE}/${ID^}_${VERSION_ID}/"
-		POLICY="release\ v=${VALID_REPO_TYPE},o=grommunio,n=Debian_${VERSION_ID},l=grommunio,c=main,b=${ARCH}"
+		INDEX="$(apt-get indextargets "Origin: grommunio" "Version: ${VALID_REPO_TYPE}")"
 		# only add/replace repository if not present or problemss occur
 		# repository not known 
-		if ! apt-cache policy |grep -C1 -qE "$POLICY" ; then
+		if [[ -z "$INDEX" ]]; then
 			add_grommunio_repo
 		# mend keyring, credential and duplicate sources.
 		elif ! apt-get update  -qq; then
