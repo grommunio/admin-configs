@@ -121,6 +121,7 @@ case ${ID} in
 		fi
 		;;
 	grommunio*)
+		sed -i "s#15.[0-9]#${VERSION_ID}#g" /etc/zypp/repos.d/*.repo
 		PKG_MANAGER="zypper"
 		if [[ ${OPERATION} == "upgrade" ]]; then
 			UPDATE_CMD="zypper ref && zypper dup -y"
