@@ -113,9 +113,9 @@ case ${ID} in
 	opensuse*|sles)
 		PKG_MANAGER="zypper"
 		if [[ ${OPERATION} == "upgrade" ]]; then
-			UPDATE_CMD="zypper purge-kernels && zypper ref && zypper dup -y"
+			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper dup -y"
 		elif [[ ${OPERATION} == "update" ]]; then
-			UPDATE_CMD="zypper purge-kernels && zypper ref && zypper up -y"
+			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper up -y"
 		else
 			UPDATE_CMD="zypper ref && zypper lu"
 		fi
@@ -123,9 +123,9 @@ case ${ID} in
 	grommunio*)
 		PKG_MANAGER="zypper"
 		if [[ ${OPERATION} == "upgrade" ]]; then
-			UPDATE_CMD="zypper purge-kernels && zypper ref && zypper dup -y"
+			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper dup -y"
 		elif [[ ${OPERATION} == "update" ]]; then
-			UPDATE_CMD="zypper purge-kernels && zypper ref && zypper up -y"
+			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper up -y"
 		else
 			UPDATE_CMD="zypper ref && zypper lu --allow-vendor-change"
 		fi
