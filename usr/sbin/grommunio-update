@@ -31,6 +31,27 @@ cpu_supports_x86_64_v2() {
 	return 0
 }
 
+# A kernel/udev upgrade can change predictable NIC names (e.g. eth0 -> ens192),
+# which cuts off the network after reboot because the interface config is keyed
+# to the old name. Pin each active physical ethernet NIC to its current name by
+# MAC (a systemd .link) so the name survives the upgrade and config keeps working.
+pin_interface_names() {
+	local path iface mac link
+	for path in /sys/class/net/*; do
+		iface="${path##*/}"
+		[ -e "${path}/device" ] || continue
+		[ "$(cat "${path}/type" 2>/dev/null)" = "1" ] || continue
+		case "${iface}" in lo|veth*|docker*|br-*|virbr*|bond*|tap*|tun*|vnet*|*.*) continue ;; esac
+		mac=$(cat "${path}/address" 2>/dev/null)
+		[[ "${mac}" =~ ^[0-9a-fA-F:]{17}$ ]] || continue
+		link="/etc/systemd/network/10-grommunio-pin-${iface}.link"
+		[ -e "${link}" ] && continue
+		mkdir -p /etc/systemd/network
+		printf '[Match]\nMACAddress=%s\n\n[Link]\nName=%s\n' "${mac}" "${iface}" > "${link}"
+		echo -e "  ${BLUE}pinning NIC ${iface} (${mac}) so the upgrade cannot rename it${TXTRST}"
+	done
+}
+
 # Determine the next openSUSE Leap release to migrate to: the lowest stable
 # version newer than the running one, but only if grommunio actually ships
 # packages for it. Results are returned via globals (the function must be called
@@ -140,6 +161,10 @@ opensuse_leap_dist_upgrade() {
 		echo -e "${RED}▶ Migration aborted.${TXTRST} Less than 8 GB free on / ($((free_kb / 1024)) MB available); free up space and retry."
 		return 1
 	fi
+
+	# Keep NIC names stable so the new kernel/udev cannot rename them and leave
+	# the box unreachable after the reboot.
+	pin_interface_names
 
 	# Free /boot before the upgrade.
 	zypper -n purge-kernels
