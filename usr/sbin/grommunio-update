@@ -407,6 +407,9 @@ echo -e "\n${BLUE}▶${TXTRST} on repository ${REPO}."
 if [ -n "${REPO}" ]; then
 	/usr/sbin/grommunio-repo "${REPO}"
 fi
+if [ "${PKG_MANAGER}" == "zypper" ] && [[ ${OPERATION} != "check" ]]; then
+	keycloak_preserve_conf
+fi
 eval "${UPDATE_CMD}"
 
 UPDATE_EXIT_STATUS=$?
@@ -430,14 +433,29 @@ if [[ ${OPERATION} == "update" ]] || [[ ${OPERATION} == "upgrade" ]]; then
 	if [ "${PKG_MANAGER}" == "zypper" ]; then
 		echo -ne "\n${BLUE}▶${TXTRST} Running post-update/upgrade checks"
 		systemctl daemon-reload
-		if [[ "$(systemctl is-active redis@grommunio)" != "active" ]]; then
-			systemctl enable redis@grommunio
-			systemctl restart redis@grommunio
+		# grommunio uses an instanced redis service for caching (grommunio still
+		# requires redis on Leap 16.0, not valkey); make sure it is enabled and up.
+		if systemctl cat redis@grommunio >/dev/null 2>&1; then
+			systemctl enable redis@grommunio >/dev/null 2>&1
+			if [[ "$(systemctl is-active redis@grommunio)" != "active" ]]; then
+				systemctl restart redis@grommunio
+			fi
 		fi
-		if [[ ! -e /etc/php8/fpm/php-fpm.conf ]]; then
+		if [[ ! -e /etc/php8/fpm/php-fpm.conf ]] && [[ -e /etc/php8/fpm/php-fpm.conf.default ]]; then
 			mv /etc/php8/fpm/php-fpm.conf.default /etc/php8/fpm/php-fpm.conf
 			systemctl enable php-fpm
 			systemctl restart php-fpm
+		fi
+		# A distribution upgrade renames /etc/pam.d/smtp to .rpmsave, which
+		# breaks Postfix SASL (pam_gromox); restore it if it was displaced.
+		if [[ -f /etc/pam.d/smtp.rpmsave ]] && [[ ! -f /etc/pam.d/smtp ]]; then
+			mv /etc/pam.d/smtp.rpmsave /etc/pam.d/smtp
+		fi
+		keycloak_cleanup_artifacts
+		disable_apparmor_selinux
+		# A major distribution upgrade brings a new grommunio-web index format.
+		if [[ -n "${MIGRATED_TO:-}" ]]; then
+			reset_grommunio_web_index
 		fi
 	fi
 	if [[ "$(/usr/sbin/gromox-dbop -U | wc -l)" != "1" ]]; then
