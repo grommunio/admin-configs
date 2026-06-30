@@ -93,7 +93,7 @@ disable_unreachable_repos() {
 			echo -e "  ${YELLOW}disabling repository without ${target} content:${TXTRST} ${alias}"
 			zypper -n modifyrepo -d "$alias" >/dev/null 2>&1
 		fi
-	done < <(zypper lr -E 2>/dev/null | tail -n +3 | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')
+	done < <(zypper lr -E 2>/dev/null | awk -F'|' '$1 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')
 }
 
 # "upgrade" on openSUSE Leap: migrate to the next distribution release if one is
