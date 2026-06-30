@@ -81,29 +81,29 @@ opensuse_in_version_dup() {
 	zypper -n --gpg-auto-import-keys dup -y --replacefiles --auto-agree-with-licenses --force-resolution
 }
 
-# Disable every enabled repository that is neither grommunio nor an official
-# openSUSE/NVIDIA repo before a dist-upgrade. A leftover release-specific
-# third-party repo is the most common reason an unattended migration fails or
-# resolves a package destructively; opensuse-migration-tool does the same.
-disable_foreign_repos() {
-	local alias
+# After re-pointing repositories to ${1}, disable any enabled repo whose target
+# URL has no content. openSUSE Leap 16.0 dropped the dedicated update/sle/
+# backports repositories, so without this a single unreachable repo would block
+# the dist-upgrade. Repos that do have target content (oss, grommunio, ...) stay.
+disable_unreachable_repos() {
+	local target="$1" alias
 	while read -r alias; do
-		case "$alias" in
-			""|grommunio|openSUSE*|NVIDIA*|tmp-grommunio-migration) ;;
-			*)
-				echo -e "  ${YELLOW}disabling foreign repository for the upgrade:${TXTRST} ${alias}"
-				zypper -n modifyrepo -d "$alias" >/dev/null 2>&1
-				;;
-		esac
+		[ -z "$alias" ] && continue
+		if ! zypper -n --releasever "$target" --gpg-auto-import-keys refresh "$alias" >/dev/null 2>&1; then
+			echo -e "  ${YELLOW}disabling repository without ${target} content:${TXTRST} ${alias}"
+			zypper -n modifyrepo -d "$alias" >/dev/null 2>&1
+		fi
 	done < <(zypper lr -E 2>/dev/null | tail -n +3 | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')
 }
 
 # "upgrade" on openSUSE Leap: migrate to the next distribution release if one is
 # available (e.g. 15.6 -> 16.0), otherwise just dup within the current version.
-# The 16.0 repo layout switched to the index service, so we replicate the path
-# opensuse-migration-tool uses (openSUSE-repos) instead of editing .repo files.
+# grommunio appliances use custom static repo aliases (base, update, grommunio,
+# jeng, ...) and not the index-service openSUSE-repos package, so the release is
+# switched manually like the community recipe: re-point the version in every
+# repo, drop the ones the target no longer ships, then dup.
 opensuse_leap_dist_upgrade() {
-	local target free_kb postfix_was_active=0
+	local target free_kb postfix_was_active=0 repo_backup ver_re
 
 	# Only Leap-family systems get a cross-version migration; Tumbleweed, SLES,
 	# MicroOS etc. just dup within their current distribution.
@@ -141,33 +141,19 @@ opensuse_leap_dist_upgrade() {
 		return 1
 	fi
 
-	# Free /boot and switch repository management to the index service the way
-	# opensuse-migration-tool does (the 16.0 repo layout requires it).
+	# Free /boot before the upgrade.
 	zypper -n purge-kernels
-	zypper -n --gpg-auto-import-keys install -y --force-resolution openSUSE-repos || return $?
-	zypper -n refresh-services
 
-	# Drop foreign/stale repos that would otherwise break or poison the dup.
-	disable_foreign_repos
-
-	# Pull the target release's repo definitions (new index-service layout).
-	zypper -n removerepo tmp-grommunio-migration >/dev/null 2>&1
-	zypper -n --gpg-auto-import-keys addrepo -f "https://download.opensuse.org/distribution/leap/${target}/repo/oss" tmp-grommunio-migration || return $?
-	if ! zypper -n --gpg-auto-import-keys install --repo tmp-grommunio-migration -y --force-resolution --from tmp-grommunio-migration openSUSE-repos-Leap; then
-		zypper -n removerepo tmp-grommunio-migration >/dev/null 2>&1
-		return 1
-	fi
-	zypper -n removerepo tmp-grommunio-migration
-	zypper -n refresh-services
-
-	# Re-point the grommunio repository at the target release so grommunio
-	# packages upgrade in lockstep with the OS. Keep a backup so a failed dup
-	# can be rolled back - otherwise a half-migrated host would carry a 16.0
-	# repo on a 15.6 base and a later `update` could pull mismatched packages.
-	if [ -f /etc/zypp/repos.d/grommunio.repo ]; then
-		cp /etc/zypp/repos.d/grommunio.repo /etc/zypp/repos.d/grommunio.repo.gu-bak
-		sed -i "s#openSUSE_Leap_${VERSION_ID}#openSUSE_Leap_${target}#g" /etc/zypp/repos.d/grommunio.repo
-	fi
+	# Switch the distribution manually. Back up repos.d first so a failed dup can
+	# be rolled back instead of leaving a half-migrated host.
+	repo_backup=$(mktemp -d)
+	cp -a /etc/zypp/repos.d/. "${repo_backup}/"
+	# Re-point hardcoded versions (base, grommunio, grommunio-obs, jeng, ...);
+	# $releasever-based repos follow --releasever during refresh and dup.
+	ver_re="${VERSION_ID//./\\.}"
+	sed -i "s/${ver_re}/${target}/g" /etc/zypp/repos.d/*.repo
+	# Disable repos the target no longer ships (16.0 dropped update/sle/backports).
+	disable_unreachable_repos "${target}"
 
 	# Stop postfix so mail is not lost or corrupted while binaries are replaced.
 	if [[ "$(systemctl is-active postfix)" == "active" ]]; then
@@ -180,19 +166,19 @@ opensuse_leap_dist_upgrade() {
 	#   --force-resolution     auto-pick a solution for branding/package conflicts
 	#   --allow-vendor-change  allow grommunio <-> openSUSE vendor transitions
 	echo -e "\n${BLUE}▶${TXTRST} Running zypper dup to openSUSE Leap ${target}..."
-	if ! zypper -n --gpg-auto-import-keys --releasever "${target}" dup -y --replacefiles --auto-agree-with-licenses --force-resolution --allow-vendor-change --download-in-advance; then
+	if ! zypper -n --gpg-auto-import-keys --releasever "${target}" dup -y --replacefiles --auto-agree-with-licenses --force-resolution --allow-vendor-change --download in-advance; then
 		echo -e "${YELLOW}▶${TXTRST} First dup pass reported problems, retrying once..."
-		if ! zypper -n --gpg-auto-import-keys --releasever "${target}" dup -y --replacefiles --auto-agree-with-licenses --force-resolution --allow-vendor-change --download-in-advance; then
-			# Roll back the repo re-point and bring mail back; stay on ${VERSION_ID}.
-			if [ -f /etc/zypp/repos.d/grommunio.repo.gu-bak ]; then
-				mv /etc/zypp/repos.d/grommunio.repo.gu-bak /etc/zypp/repos.d/grommunio.repo
-			fi
+		if ! zypper -n --gpg-auto-import-keys --releasever "${target}" dup -y --replacefiles --auto-agree-with-licenses --force-resolution --allow-vendor-change --download in-advance; then
+			# Roll back the repository switch and bring mail back; stay on ${VERSION_ID}.
+			rm -f /etc/zypp/repos.d/*.repo
+			cp -a "${repo_backup}/." /etc/zypp/repos.d/
+			rm -rf "${repo_backup}"
 			[ "${postfix_was_active}" -eq 1 ] && systemctl start postfix
 			return 1
 		fi
 	fi
 
-	rm -f /etc/zypp/repos.d/grommunio.repo.gu-bak
+	rm -rf "${repo_backup}"
 	FORCE_REBOOT=1
 	MIGRATED_TO="${target}"
 	return 0
