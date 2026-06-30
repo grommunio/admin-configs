@@ -20,6 +20,272 @@ make_reboot() {
 	/sbin/shutdown -r now
 }
 
+# openSUSE Leap >= 16 refuses to boot on CPUs below the x86_64-v2 baseline
+# ("Fatal glibc error: CPU does not support x86-64-v2"). Check before migrating.
+cpu_supports_x86_64_v2() {
+	local flags f
+	flags=$(grep -m1 '^flags' /proc/cpuinfo)
+	for f in cx16 sse4_1 sse4_2 popcnt; do
+		grep -qw "$f" <<<"$flags" || return 1
+	done
+	return 0
+}
+
+# Determine the next openSUSE Leap release to migrate to: the lowest stable
+# version newer than the running one, but only if grommunio actually ships
+# packages for it. Results are returned via globals (the function must be called
+# directly, not in a $(...) subshell, so they propagate): DETECTED_TARGET holds
+# the version (e.g. 16.0) or is empty; TARGET_DETECT_FAILED=1 means detection
+# could not run (no curl/jq or no network), so the caller can tell "up to date"
+# apart from "could not check".
+detect_target_leap() {
+	local cur="${VERSION_ID}" cur_major="${VERSION_ID%%.*}" target="" api
+	DETECTED_TARGET=""
+	TARGET_DETECT_FAILED=0
+	if ! command -v curl >/dev/null 2>&1; then
+		TARGET_DETECT_FAILED=1
+		return 0
+	fi
+	if command -v jq >/dev/null 2>&1; then
+		api=$(curl -s --fail --max-time 30 https://get.opensuse.org/api/v0/distributions.json 2>/dev/null) && \
+		target=$(jq -r --arg cur "$cur" '
+			[.Leap[] | select(.state == "Stable") | .version
+			 | select((tonumber) > ($cur | tonumber))]
+			| sort_by(tonumber) | first // empty' <<<"$api" 2>/dev/null)
+	fi
+	# Fallback when jq is unavailable: probe the next major .0 release.
+	if [ -z "$target" ]; then
+		local cand="$((cur_major + 1)).0"
+		curl -sfI --max-time 30 "https://download.opensuse.org/distribution/leap/${cand}/repo/oss/repodata/repomd.xml" >/dev/null 2>&1 && target="$cand"
+	fi
+	# Distinguish a real "nothing newer" from a network outage that silently
+	# masked an available upgrade.
+	if [ -z "$target" ] && ! curl -sfI --max-time 15 https://get.opensuse.org/ >/dev/null 2>&1; then
+		TARGET_DETECT_FAILED=1
+		return 0
+	fi
+	# Only migrate to a release grommunio actually builds for.
+	if [ -n "$target" ]; then
+		curl -sfI --max-time 30 "https://download.grommunio.com/community/openSUSE_Leap_${target}/repodata/repomd.xml" >/dev/null 2>&1 || target=""
+	fi
+	DETECTED_TARGET="$target"
+}
+
+# Distribution dup that stays on the current Leap version (latest packages only).
+# Uses the same conflict-tolerant flags as the migration so an upgrade that was
+# interrupted mid-dup can still converge on a re-run (those flags are no-ops
+# when there is no conflict).
+opensuse_in_version_dup() {
+	zypper -n purge-kernels
+	zypper -n --gpg-auto-import-keys ref && \
+	zypper -n --gpg-auto-import-keys dup -y --replacefiles --auto-agree-with-licenses --force-resolution
+}
+
+# Disable every enabled repository that is neither grommunio nor an official
+# openSUSE/NVIDIA repo before a dist-upgrade. A leftover release-specific
+# third-party repo is the most common reason an unattended migration fails or
+# resolves a package destructively; opensuse-migration-tool does the same.
+disable_foreign_repos() {
+	local alias
+	while read -r alias; do
+		case "$alias" in
+			""|grommunio|openSUSE*|NVIDIA*|tmp-grommunio-migration) ;;
+			*)
+				echo -e "  ${YELLOW}disabling foreign repository for the upgrade:${TXTRST} ${alias}"
+				zypper -n modifyrepo -d "$alias" >/dev/null 2>&1
+				;;
+		esac
+	done < <(zypper lr -E 2>/dev/null | tail -n +3 | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')
+}
+
+# "upgrade" on openSUSE Leap: migrate to the next distribution release if one is
+# available (e.g. 15.6 -> 16.0), otherwise just dup within the current version.
+# The 16.0 repo layout switched to the index service, so we replicate the path
+# opensuse-migration-tool uses (openSUSE-repos) instead of editing .repo files.
+opensuse_leap_dist_upgrade() {
+	local target free_kb postfix_was_active=0
+
+	# Only Leap-family systems get a cross-version migration; Tumbleweed, SLES,
+	# MicroOS etc. just dup within their current distribution.
+	case "${ID}" in
+		opensuse-leap|grommunio*) ;;
+		*) opensuse_in_version_dup; return $? ;;
+	esac
+
+	echo -e "\n${BLUE}▶${TXTRST} Checking for a newer openSUSE Leap release..."
+	detect_target_leap
+	target="${DETECTED_TARGET}"
+
+	if [ -z "${target}" ]; then
+		if [ "${TARGET_DETECT_FAILED:-0}" -eq 1 ]; then
+			echo -e "${YELLOW}▶${TXTRST} Could not determine the next Leap release (curl/jq or network unavailable); upgrading packages in place only."
+		else
+			echo -e "${GREEN}▶${TXTRST} Already on the latest supported openSUSE Leap (${VERSION_ID}); upgrading packages in place."
+		fi
+		opensuse_in_version_dup
+		return $?
+	fi
+
+	echo -e "${YELLOW}▶${TXTRST} Migrating openSUSE Leap ${VERSION_ID} -> ${target}. This is a major upgrade and may take a while."
+
+	if [ "$(uname -m)" = "x86_64" ] && [ "${target%%.*}" -ge 16 ] && ! cpu_supports_x86_64_v2; then
+		echo -e "${RED}▶ Migration skipped.${TXTRST} openSUSE Leap ${target} requires an x86_64-v2 CPU; this host does not qualify and would fail to boot after the upgrade."
+		echo -e "${YELLOW}▶${TXTRST} See https://en.opensuse.org/openSUSE:X86-64-Architecture-Levels - keeping ${VERSION_ID} and updating packages only."
+		opensuse_in_version_dup
+		return $?
+	fi
+
+	free_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+	if [ -n "${free_kb}" ] && [ "${free_kb}" -lt 8388608 ]; then
+		echo -e "${RED}▶ Migration aborted.${TXTRST} Less than 8 GB free on / ($((free_kb / 1024)) MB available); free up space and retry."
+		return 1
+	fi
+
+	# Free /boot and switch repository management to the index service the way
+	# opensuse-migration-tool does (the 16.0 repo layout requires it).
+	zypper -n purge-kernels
+	zypper -n --gpg-auto-import-keys install -y --force-resolution openSUSE-repos || return $?
+	zypper -n refresh-services
+
+	# Drop foreign/stale repos that would otherwise break or poison the dup.
+	disable_foreign_repos
+
+	# Pull the target release's repo definitions (new index-service layout).
+	zypper -n removerepo tmp-grommunio-migration >/dev/null 2>&1
+	zypper -n --gpg-auto-import-keys addrepo -f "https://download.opensuse.org/distribution/leap/${target}/repo/oss" tmp-grommunio-migration || return $?
+	if ! zypper -n --gpg-auto-import-keys install --repo tmp-grommunio-migration -y --force-resolution --from tmp-grommunio-migration openSUSE-repos-Leap; then
+		zypper -n removerepo tmp-grommunio-migration >/dev/null 2>&1
+		return 1
+	fi
+	zypper -n removerepo tmp-grommunio-migration
+	zypper -n refresh-services
+
+	# Re-point the grommunio repository at the target release so grommunio
+	# packages upgrade in lockstep with the OS. Keep a backup so a failed dup
+	# can be rolled back - otherwise a half-migrated host would carry a 16.0
+	# repo on a 15.6 base and a later `update` could pull mismatched packages.
+	if [ -f /etc/zypp/repos.d/grommunio.repo ]; then
+		cp /etc/zypp/repos.d/grommunio.repo /etc/zypp/repos.d/grommunio.repo.gu-bak
+		sed -i "s#openSUSE_Leap_${VERSION_ID}#openSUSE_Leap_${target}#g" /etc/zypp/repos.d/grommunio.repo
+	fi
+
+	# Stop postfix so mail is not lost or corrupted while binaries are replaced.
+	if [[ "$(systemctl is-active postfix)" == "active" ]]; then
+		postfix_was_active=1
+		systemctl stop postfix
+	fi
+
+	# The distribution upgrade itself, with flags so it runs unattended:
+	#   --replacefiles         python311 -> python313 style file conflicts
+	#   --force-resolution     auto-pick a solution for branding/package conflicts
+	#   --allow-vendor-change  allow grommunio <-> openSUSE vendor transitions
+	echo -e "\n${BLUE}▶${TXTRST} Running zypper dup to openSUSE Leap ${target}..."
+	if ! zypper -n --gpg-auto-import-keys --releasever "${target}" dup -y --replacefiles --auto-agree-with-licenses --force-resolution --allow-vendor-change --download-in-advance; then
+		echo -e "${YELLOW}▶${TXTRST} First dup pass reported problems, retrying once..."
+		if ! zypper -n --gpg-auto-import-keys --releasever "${target}" dup -y --replacefiles --auto-agree-with-licenses --force-resolution --allow-vendor-change --download-in-advance; then
+			# Roll back the repo re-point and bring mail back; stay on ${VERSION_ID}.
+			if [ -f /etc/zypp/repos.d/grommunio.repo.gu-bak ]; then
+				mv /etc/zypp/repos.d/grommunio.repo.gu-bak /etc/zypp/repos.d/grommunio.repo
+			fi
+			[ "${postfix_was_active}" -eq 1 ] && systemctl start postfix
+			return 1
+		fi
+	fi
+
+	rm -f /etc/zypp/repos.d/grommunio.repo.gu-bak
+	FORCE_REBOOT=1
+	MIGRATED_TO="${target}"
+	return 0
+}
+
+# Manual follow-up tasks after a major Leap migration that are too
+# system-specific for grommunio-update to apply safely on its own.
+print_post_migration_notes() {
+	echo -e "\n${YELLOW}▶ openSUSE Leap ${MIGRATED_TO} migration finished - manual follow-up may be required:${TXTRST}"
+	echo -e "  - A reboot is required to activate the new kernel (done automatically unless --noreboot was given)."
+	echo -e "  - Postfix: replace deprecated smtp[d]_use_tls with smtp[d]_tls_security_level=may in /etc/postfix/main.cf, replace 'fifo' with 'unix' in /etc/postfix/master.cf, then run 'postfix check'."
+	echo -e "  - Third-party repositories were disabled for the upgrade; re-enable and re-point them to ${MIGRATED_TO} if still needed ('zypper lr', 'zypper mr -e <repo>')."
+	echo -e "  - SSH root password login: if needed, remove openssh-server-config-disallow-rootlogin or add PermitRootLogin yes under /etc/ssh/sshd_config.d/."
+	echo -e "  - plymouth no longer works: 'systemctl mask plymouth-start.service plymouth-quit.service plymouth-quit-wait.service' and drop 'quiet splash' from /etc/default/grub."
+	echo -e "  - Certbot is gone on 16.0: switch to acme.sh (or symlink certbot-3.13)."
+	echo -e "  - Review leftover *.rpmnew / *.rpmsave files and re-apply your PHP-FPM pool changes under /etc/php8/fpm/php-fpm.d/."
+	echo -e "  - Full step-by-step recipe: https://community.grommunio.com/d/2617"
+}
+
+# grommunio does not support AppArmor or SELinux in enforcing mode; make sure
+# both are off (Leap 16.0 ships SELinux as the new default). Safe to re-run.
+disable_apparmor_selinux() {
+	if systemctl cat apparmor >/dev/null 2>&1; then
+		if [[ "$(systemctl is-active apparmor)" == "active" ]] || [[ "$(systemctl is-enabled apparmor 2>/dev/null)" == "enabled" ]]; then
+			echo -e "\n${BLUE}▶${TXTRST} Disabling AppArmor (unsupported by grommunio)"
+			systemctl disable --now apparmor >/dev/null 2>&1
+			systemctl mask apparmor >/dev/null 2>&1
+		fi
+	fi
+	if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+		setenforce 0 >/dev/null 2>&1
+	fi
+	if [ -f /etc/selinux/config ] && grep -qiE '^[[:space:]]*SELINUX[[:space:]]*=[[:space:]]*(enforcing|permissive)' /etc/selinux/config; then
+		echo -e "\n${BLUE}▶${TXTRST} Disabling SELinux in /etc/selinux/config (unsupported by grommunio)"
+		sed -i 's/^[[:space:]]*SELINUX[[:space:]]*=.*/SELINUX=disabled/I' /etc/selinux/config
+	fi
+}
+
+# The grommunio-keycloak package now ships /opt/grommunio-keycloak/conf as a
+# symlink to /etc/grommunio-keycloak. Where conf is still a real directory, copy
+# its contents to /etc first so the config survives the package upgrade that
+# replaces the directory with the symlink. Run before the package operation.
+keycloak_preserve_conf() {
+	rpm -q grommunio-keycloak >/dev/null 2>&1 || return 0
+	if [ -d /opt/grommunio-keycloak/conf ] && [ ! -L /opt/grommunio-keycloak/conf ]; then
+		echo -e "\n${BLUE}▶${TXTRST} Preserving grommunio-keycloak config to /etc/grommunio-keycloak"
+		mkdir -p /etc/grommunio-keycloak
+		# -n keeps any config already in /etc (it is the source of truth once
+		# populated); surface failures so config loss is not silent.
+		if ! cp -an /opt/grommunio-keycloak/conf/. /etc/grommunio-keycloak/; then
+			echo -e "${RED}▶ Warning:${TXTRST} could not fully copy grommunio-keycloak config to /etc/grommunio-keycloak; verify it after the upgrade."
+		fi
+	fi
+}
+
+# Remove the rpm "conf;<hex>" artifacts left behind by the directory->symlink
+# transition of grommunio-keycloak. Run after the package operation.
+keycloak_cleanup_artifacts() {
+	rpm -q grommunio-keycloak >/dev/null 2>&1 || return 0
+	local f
+	for f in '/opt/grommunio-keycloak/conf;'*; do
+		{ [ -e "$f" ] || [ -L "$f" ]; } && rm -f "$f"
+	done
+}
+
+# After a major distribution upgrade, grommunio-web's per-user sqlite search
+# index uses a new format; drop it so it is rebuilt on next access.
+reset_grommunio_web_index() {
+	local idx=/var/lib/grommunio-web/sqlite-index
+	if [ -d "$idx" ]; then
+		echo -e "\n${BLUE}▶${TXTRST} Clearing grommunio-web search index for rebuild"
+		find "$idx" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+	fi
+}
+
+# When triggered from a service (the admin web UI runs us inside the
+# grommunio-admin-api cgroup via sudo), a dist-upgrade that restarts that
+# service would otherwise kill this script mid-run. Re-exec into a transient
+# systemd scope so we keep running independently until the work is done or the
+# box reboots. CLI output and the logfile are unaffected (--scope keeps stdio).
+# Only the long-running update/upgrade paths need this (not check/help), and we
+# probe scope creation first so a systemd hiccup falls back to running inline.
+case " $* " in
+	*" update "*|*" upgrade "*)
+		if [ -z "${GROMMUNIO_UPDATE_SCOPE:-}" ] && [ "$(id -u)" -eq 0 ] && [ -d /run/systemd/system ] \
+			&& command -v systemd-run >/dev/null 2>&1 \
+			&& systemd-run --scope --quiet --collect -- true >/dev/null 2>&1; then
+			export GROMMUNIO_UPDATE_SCOPE=1
+			exec systemd-run --scope --quiet --collect --unit="grommunio-update-$$" -- "$0" "$@"
+		fi
+		;;
+esac
+
 NOREBOOT=0
 NOPOSTFIX=0
 
@@ -113,9 +379,9 @@ case ${ID} in
 	opensuse*|sles)
 		PKG_MANAGER="zypper"
 		if [[ ${OPERATION} == "upgrade" ]]; then
-			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper dup -y"
+			UPDATE_CMD="opensuse_leap_dist_upgrade"
 		elif [[ ${OPERATION} == "update" ]]; then
-			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper up -y"
+			UPDATE_CMD="zypper -n purge-kernels && zypper -n --gpg-auto-import-keys ref && zypper -n up -y"
 		else
 			UPDATE_CMD="zypper ref && zypper lu"
 		fi
@@ -123,9 +389,9 @@ case ${ID} in
 	grommunio*)
 		PKG_MANAGER="zypper"
 		if [[ ${OPERATION} == "upgrade" ]]; then
-			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper dup -y"
+			UPDATE_CMD="opensuse_leap_dist_upgrade"
 		elif [[ ${OPERATION} == "update" ]]; then
-			UPDATE_CMD="zypper -n purge-kernels && zypper ref && zypper up -y"
+			UPDATE_CMD="zypper -n purge-kernels && zypper -n --gpg-auto-import-keys ref && zypper -n up -y"
 		else
 			UPDATE_CMD="zypper ref && zypper lu --allow-vendor-change"
 		fi
@@ -182,9 +448,13 @@ if [[ ${OPERATION} == "update" ]] || [[ ${OPERATION} == "upgrade" ]]; then
 	fi
 fi
 
+if [[ -n "${MIGRATED_TO:-}" ]]; then
+	print_post_migration_notes
+fi
+
 echo -ne "\n${BLUE}▶${TXTRST} Checking for pending service restart or reboot"
 if [ "${PKG_MANAGER}" == "zypper" ] || [ "${PKG_MANAGER}" == "apt" ]; then
-	if [ -f /var/run/reboot-needed ] || [ -f /var/run/reboot-required ]; then
+	if [ -f /var/run/reboot-needed ] || [ -f /var/run/reboot-required ] || [[ ${FORCE_REBOOT:-0} -eq 1 ]]; then
 		if [[ ${NOREBOOT} -eq 1 ]] || [[ ${OPERATION} == "check" ]]; then
 			echo -e "\n${YELLOW}▶ Reboot required.${TXTRST} Kernel upgrade waiting for activation. Please restart the system for the changes to take effect."
 		else
