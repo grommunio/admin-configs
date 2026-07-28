@@ -204,6 +204,10 @@ opensuse_leap_dist_upgrade() {
 		opensuse_in_version_dup
 		return $?
 	fi
+	
+	# purge kernels to free disk space
+	echo -e "\n${BLUE}▶${TXTRST} Purging kernels to give some disk space free ..."
+	zypper -n purge-kernels
 
 	free_kb=$(df -Pk / | awk 'NR==2 {print $4}')
 	if [ -n "${free_kb}" ] && [ "${free_kb}" -lt 8388608 ]; then
