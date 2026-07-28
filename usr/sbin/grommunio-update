@@ -24,6 +24,11 @@ make_reboot() {
 # ("Fatal glibc error: CPU does not support x86-64-v2"). Check before migrating.
 cpu_supports_x86_64_v2() {
 	local flags f
+	if command -v /lib64/ld-linux-x86-64.so.2 &>/dev/null; then
+	    if /lib64/ld-linux-x86-64.so.2 --help | grep -q "x86-64-v2 (supported"; then
+		return 0
+	    fi
+	fi
 	flags=$(grep -m1 '^flags' /proc/cpuinfo)
 	for f in cx16 sse4_1 sse4_2 popcnt; do
 		grep -qw "$f" <<<"$flags" || return 1
