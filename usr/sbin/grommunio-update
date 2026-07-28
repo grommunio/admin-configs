@@ -166,7 +166,7 @@ opensuse_leap_dist_upgrade() {
 	fi
 
 	if ! is_valid_machine_id; then
-		echo -e "${YELLOW}# Warning while checking machine-id.${TXTRST} The machine-id is missing or not valid. Trying to solve it automatically..."
+		echo -e "${YELLOW}#${TXTRST} Warning while checking machine-id. The machine-id is missing or not valid. Trying to solve it automatically..."
 
 		# check if there are root permissions
 		if [[ $EUID -ne 0 ]]; then
@@ -193,7 +193,7 @@ opensuse_leap_dist_upgrade() {
 			exit 1
 		fi
 	else
-		echo -e "${BLUE}#${TXTRST} Valif machine-id present: $(cat "$MACHINE_ID_FILE" | tr -d '[:space:]'). Can continue ..."
+		echo -e "${BLUE}#${TXTRST} Valid machine-id present: $(cat "$MACHINE_ID_FILE" | tr -d '[:space:]'). Can continue ..."
 	fi
 
 	echo -e "${YELLOW}▶${TXTRST} Migrating openSUSE Leap ${VERSION_ID} -> ${target}. This is a major upgrade and may take a while."
