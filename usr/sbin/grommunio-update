@@ -166,12 +166,12 @@ opensuse_leap_dist_upgrade() {
 	fi
 
 	if ! is_valid_machine_id; then
-		echo "${YELLOW}# Warning while checking machine-id.${TXTRST} The machine-id is missing or not valid. Trying to solve it automatically..."
+		echo -e "${YELLOW}# Warning while checking machine-id.${TXTRST} The machine-id is missing or not valid. Trying to solve it automatically..."
 
 		# check if there are root permissions
 		if [[ $EUID -ne 0 ]]; then
-			echo "${RED}# ERROR while checking user.${TXTRST} For generation of new machine-id root permissions are required!" >&2
-			echo "Please re-run the script with 'sudo' or as user 'root'." >&2
+			echo -e "${RED}# ERROR while checking user.${TXTRST} For generation of new machine-id root permissions are required!" >&2
+			echo -e "Please re-run the script with 'sudo' or as user 'root'." >&2
 			exit 1
 		fi
 
@@ -183,17 +183,17 @@ opensuse_leap_dist_upgrade() {
 
 			# Recheck machine-id
 			if is_valid_machine_id; then
-				echo "${BLUE}#${TXTRST} Generation of machine-id successfull."
+				echo -e "${BLUE}#${TXTRST} Generation of machine-id successfull."
 			else
-				echo "${RED}# Error while rechecking machine-id.${TXTRST} 'systemd-machine-id-setup' has been run, but machine-id is still not valid." >&2
+				echo -e "${RED}# Error while rechecking machine-id.${TXTRST} 'systemd-machine-id-setup' has been run, but machine-id is still not valid." >&2
 				exit 1
 			fi
 		else
-			echo "${RED}# Error while looking for 'systemd-machine-id-setup'.${TXTRST} 'systemd-machine-id-setup' has not be found on the system!" >&2
+			echo -e "${RED}# Error while looking for 'systemd-machine-id-setup'.${TXTRST} 'systemd-machine-id-setup' has not be found on the system!" >&2
 			exit 1
 		fi
 	else
-		echo "${BLUE}#${TXTRST} Valif machine-id present: $(cat "$MACHINE_ID_FILE" | tr -d '[:space:]'). Can continue ..."
+		echo -e "${BLUE}#${TXTRST} Valif machine-id present: $(cat "$MACHINE_ID_FILE" | tr -d '[:space:]'). Can continue ..."
 	fi
 
 	echo -e "${YELLOW}▶${TXTRST} Migrating openSUSE Leap ${VERSION_ID} -> ${target}. This is a major upgrade and may take a while."
