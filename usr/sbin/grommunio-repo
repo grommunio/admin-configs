@@ -77,8 +77,8 @@ add_grommunio_repo() {
 			;;
 		apt)
 			echo -e "Types: deb\nURIs: ${REPO_URL}\nSuites: ${ID^}_${VERSION_ID}\nComponents: main\nSigned-By: /usr/share/keyrings/download.grommunio.com.gpg" > /etc/apt/sources.list.d/grommunio.sources
-			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --output /usr/share/keyrings/download.grommunio.com.gpg > /dev/null 2>&1
-			curl https://download.grommunio.com/RPM-GPG-KEY-grommunio >/etc/apt/trusted.gpg.d/download.grommunio.com.asc
+			curl -sSfL https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --yes --output /usr/share/keyrings/download.grommunio.com.gpg > /dev/null 2>&1
+			curl -sSfL https://download.grommunio.com/RPM-GPG-KEY-grommunio >/etc/apt/trusted.gpg.d/download.grommunio.com.asc
 			if [[ ${VALID_REPO_TYPE} == "supported" ]]; then
 				echo -e "machine download.grommunio.com\nlogin $(awk -F: '{ print $1 }' /etc/grommunio-admin-common/license/credentials.txt)\npassword $(awk -F: '{ print $2 }' /etc/grommunio-admin-common/license/credentials.txt)" > /etc/apt/auth.conf.d/grommunio.conf
 			fi
