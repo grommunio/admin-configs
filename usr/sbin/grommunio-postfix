@@ -1,18 +1,45 @@
 #!/bin/bash
 # update/extend grommunio postfix settings as part of grommunio-update
 
-if [ ! -e /etc/postfix/grommunio-virtual-mailbox-domains.cf ]; then
-exit 1
-fi
+FORCE=false
+[ "$1" = '-f' ] && FORCE=true
 
-MYSQL_USER=$(grep "^user" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^user = ' '{ print $2 }')
-MYSQL_PASS=$(grep "^password" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^password = ' '{ print $2 }')
-MYSQL_HOST=$(grep "^hosts" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^hosts = ' '{ print $2 }')
-MYSQL_DB=$(grep "^dbname" /etc/postfix/grommunio-virtual-mailbox-domains.cf | awk -F'^dbname = ' '{ print $2 }')
+# Get mysql connection information from either an already configured file in
+# postfix and otherwise from gromox's mysql_adaptor in case we deleted it to
+# forcibly recreate them instead of using the "-f" switch.
+if [ -e /etc/postfix/grommunio-virtual-mailbox-domains.cf ]; then
+	MYSQL_USER=$(awk -F'^user = ' '/^user/ { print $2 }' /etc/postfix/grommunio-virtual-mailbox-domains.cf)
+	MYSQL_PASS=$(awk -F'^password = ' '/^password/ { print $2 }' /etc/postfix/grommunio-virtual-mailbox-domains.cf)
+	MYSQL_HOST=$(awk -F'^hosts = ' '/^hosts/ { print $2 }' /etc/postfix/grommunio-virtual-mailbox-domains.cf)
+	MYSQL_DB=$(awk -F'^dbname = ' '/^dbname/ { print $2 }' /etc/postfix/grommunio-virtual-mailbox-domains.cf)
+elif [ -e /etc/gromox/mysql_adaptor.cfg ]; then
+	MYSQL_CFG="/etc/gromox/mysql_adaptor.cfg"
+	MYSQL_USER=$(sed -ne 's/^mysql_username\s*=\s*\(.*\)/\1/p' ${MYSQL_CFG})
+	if [ -z "$MYSQL_USER" ]; then
+		MYSQL_USER="root"
+	fi
+	MYSQL_PASS=$(sed -ne 's/^mysql_password\s*=\s*\(.*\)/\1/p' ${MYSQL_CFG})
+	MYSQL_DB=$(sed -ne 's/^mysql_dbname\s*=\s*\(.*\)/\1/p' ${MYSQL_CFG})
+	if [ -z "$MYSQL_DB" ]; then
+		MYSQL_DB="grommunio"
+	fi
+	if [ "${MYSQL_DB:0:1}" = "-" ]; then
+		echo "Cannot use that dbname: ${MYSQL_DB}"
+		exit 1
+	fi
+	MYSQL_HOST=$(sed -ne 's/^mysql_host\s*=\s*\(.*\)/-h\1/p' ${MYSQL_CFG})
+	if [ -z "$MYSQL_HOST" ]; then
+		MYSQL_HOST="localhost"
+	fi
+else
+	echo "Can not find any MYSQL Connection information" >&2
+	exit 1
+fi
 
 # update base config grommunio-virtual-mailbox-domains.cf (query might have changed)
 
-cat > /etc/postfix/grommunio-virtual-mailbox-domains.cf <<EOF
+if [ $FORCE ] || [ ! -e /etc/postfix/grommunio-virtual-mailbox-domains.cf ]; then
+	cat > /etc/postfix/grommunio-virtual-mailbox-domains.cf <<EOF
 user = ${MYSQL_USER}
 password = ${MYSQL_PASS}
 hosts = ${MYSQL_HOST}
@@ -22,11 +49,13 @@ EOF
 
 postconf -e virtual_mailbox_domains="mysql:/etc/postfix/grommunio-virtual-mailbox-domains.cf"
 
+fi
+
 # update/extend other postfix configs which have been extended over the time (grommunio-setup)
 
-if [ ! -e /etc/postfix/grommunio-virtual-mailbox-alias-maps.cf ]; then
+if [ $FORCE ] || [ ! -e /etc/postfix/grommunio-virtual-mailbox-alias-maps.cf ]; then
 
-cat > /etc/postfix/grommunio-virtual-mailbox-alias-maps.cf <<EOF
+	cat > /etc/postfix/grommunio-virtual-mailbox-alias-maps.cf <<EOF
 user = ${MYSQL_USER}
 password = ${MYSQL_PASS}
 hosts = ${MYSQL_HOST}
@@ -38,9 +67,9 @@ postconf -e virtual_alias_maps="mysql:/etc/postfix/grommunio-virtual-mailbox-ali
 
 fi
 
-if [ ! -e /etc/postfix/grommunio-virtual-mailbox-maps.cf ]; then
+if [ $FORCE ] || [ ! -e /etc/postfix/grommunio-virtual-mailbox-maps.cf ]; then
 
-cat > /etc/postfix/grommunio-virtual-mailbox-maps.cf <<EOF
+	cat > /etc/postfix/grommunio-virtual-mailbox-maps.cf <<EOF
 user = ${MYSQL_USER}
 password = ${MYSQL_PASS}
 hosts = ${MYSQL_HOST}
@@ -52,9 +81,9 @@ postconf -e virtual_mailbox_maps="mysql:/etc/postfix/grommunio-virtual-mailbox-m
 
 fi
 
-if [ ! -e /etc/postfix/grommunio-bcc-forwards.cf ]; then
+if [ $FORCE ] || [ ! -e /etc/postfix/grommunio-bcc-forwards.cf ]; then
 
-cat > /etc/postfix/grommunio-bcc-forwards.cf <<EOF
+	cat > /etc/postfix/grommunio-bcc-forwards.cf <<EOF
 user = ${MYSQL_USER}
 password = ${MYSQL_PASS}
 hosts = ${MYSQL_HOST}
